@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'));
@@ -26,6 +27,8 @@ const ProtocolsPage = lazy(() => import('@/pages/protocols/ProtocolsPage'));
 const ProtocolEditorPage = lazy(() => import('@/pages/protocols/ProtocolEditorPage'));
 const SearchPage = lazy(() => import('@/pages/search/SearchPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
+const CommandPalette = lazy(() => import('@/components/CommandPalette'));
 
 function Spinner() {
   return (
@@ -60,41 +63,46 @@ export default function App() {
   }, [initialize]);
 
   return (
-    <TooltipProvider delay={300}>
-      <BrowserRouter>
-        <Suspense fallback={<Spinner />}>
-          <Routes>
-            <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />
-            <Route path="/signup" element={<GuestGuard><SignUpPage /></GuestGuard>} />
-            <Route path="/forgot-password" element={<GuestGuard><ForgotPasswordPage /></GuestGuard>} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
-            <Route path="/invite" element={<InvitationAcceptPage />} />
+    <ErrorBoundary>
+      <TooltipProvider delay={300}>
+        <BrowserRouter>
+          <CommandPalette />
+          <Suspense fallback={<Spinner />}>
+            <Routes>
+              <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />
+              <Route path="/signup" element={<GuestGuard><SignUpPage /></GuestGuard>} />
+              <Route path="/forgot-password" element={<GuestGuard><ForgotPasswordPage /></GuestGuard>} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/invite" element={<InvitationAcceptPage />} />
 
-            <Route path="/workspaces" element={<AuthGuard><WorkspaceSelectPage /></AuthGuard>} />
+              <Route path="/workspaces" element={<AuthGuard><WorkspaceSelectPage /></AuthGuard>} />
 
-            <Route path="/app" element={<AuthGuard><AppLayout /></AuthGuard>}>
-              <Route index element={<ExperimentListPage />} />
-              <Route path="experiments" element={<ExperimentListPage />} />
-              <Route path="experiments/:id" element={<ExperimentPage />} />
-              <Route path="my-experiments" element={<MyExperimentsPage />} />
-              <Route path="favorites" element={<FavoritesPage />} />
-              <Route path="recent" element={<RecentPage />} />
-              <Route path="archived" element={<ArchivedPage />} />
-              <Route path="notebooks/new" element={<CreateNotebookPage />} />
-              <Route path="notebooks/:id" element={<NotebookPage />} />
-              <Route path="templates" element={<TemplatesPage />} />
-              <Route path="templates/:id" element={<TemplateEditorPage />} />
-              <Route path="protocols" element={<ProtocolsPage />} />
-              <Route path="protocols/:id" element={<ProtocolEditorPage />} />
-              <Route path="search" element={<SearchPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-            </Route>
+              <Route path="/app" element={<AuthGuard><ErrorBoundary><AppLayout /></ErrorBoundary></AuthGuard>}>
+                <Route index element={<ExperimentListPage />} />
+                <Route path="experiments" element={<ExperimentListPage />} />
+                <Route path="experiments/:id" element={<ErrorBoundary><ExperimentPage /></ErrorBoundary>} />
+                <Route path="my-experiments" element={<MyExperimentsPage />} />
+                <Route path="favorites" element={<FavoritesPage />} />
+                <Route path="recent" element={<RecentPage />} />
+                <Route path="archived" element={<ArchivedPage />} />
+                <Route path="notebooks/new" element={<CreateNotebookPage />} />
+                <Route path="notebooks/:id" element={<NotebookPage />} />
+                <Route path="templates" element={<TemplatesPage />} />
+                <Route path="templates/:id" element={<TemplateEditorPage />} />
+                <Route path="protocols" element={<ProtocolsPage />} />
+                <Route path="protocols/:id" element={<ProtocolEditorPage />} />
+                <Route path="search" element={<SearchPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
 
-            <Route path="*" element={<Navigate to="/login" replace />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-      <Toaster position="bottom-right" richColors closeButton />
-    </TooltipProvider>
+              <Route path="/" element={<Navigate to="/login" replace />} />
+              <Route path="*" element={<AuthGuard><NotFoundPage /></AuthGuard>} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+        <Toaster position="bottom-right" richColors closeButton />
+      </TooltipProvider>
+    </ErrorBoundary>
   );
 }

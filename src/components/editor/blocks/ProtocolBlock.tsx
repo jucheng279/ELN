@@ -62,7 +62,7 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
           .from('protocols')
           .select('id, name, description, current_version')
           .eq('workspace_id', workspaceId)
-          .eq('status', 'active')
+          .eq('status', 'published')
           .ilike('name', `%${searchQuery}%`)
           .limit(10);
         setSearchResults((data ?? []) as ProtocolSearchResult[]);

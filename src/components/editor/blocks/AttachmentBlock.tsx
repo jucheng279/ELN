@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
-import { Upload, File, Download, X, RefreshCw, Loader2 } from 'lucide-react';
-import { uploadFile, getSignedUrl, deleteFile } from '@/lib/storage';
+import { Upload, Download, X, RefreshCw, Loader2 } from 'lucide-react';
+import { uploadFile, replaceFile, archiveAttachment, getSignedUrl } from '@/lib/storage';
 
 interface AttachmentContent {
   filename: string;
@@ -8,7 +8,8 @@ interface AttachmentContent {
   mimeType: string;
   fileSize: number;
   storagePath: string;
-  url: string;
+  attachmentId: string;
+  versionNumber: number;
   caption: string;
 }
 
@@ -18,7 +19,8 @@ const DEFAULT_CONTENT: AttachmentContent = {
   mimeType: '',
   fileSize: 0,
   storagePath: '',
-  url: '',
+  attachmentId: '',
+  versionNumber: 0,
   caption: '',
 };
 
@@ -67,21 +69,30 @@ export default function AttachmentBlock({
     setUploading(true);
     setError(null);
     try {
-      // Delete old file if replacing
-      if (data.storagePath) {
-        await deleteFile(data.storagePath).catch(() => {});
+      if (data.attachmentId) {
+        const result = await replaceFile(workspaceId, experimentId, data.attachmentId, file);
+        onUpdate({
+          ...data,
+          filename: file.name,
+          displayName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileSize: file.size,
+          storagePath: result.path,
+          versionNumber: result.versionNumber,
+        });
+      } else {
+        const result = await uploadFile(workspaceId, experimentId, file);
+        onUpdate({
+          ...data,
+          filename: file.name,
+          displayName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileSize: file.size,
+          storagePath: result.path,
+          attachmentId: result.attachmentId,
+          versionNumber: 1,
+        });
       }
-
-      const { path, url } = await uploadFile(workspaceId, experimentId, file);
-      onUpdate({
-        ...data,
-        filename: file.name,
-        displayName: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        fileSize: file.size,
-        storagePath: path,
-        url,
-      });
     } catch (err: any) {
       setError(err.message || 'Upload failed');
     } finally {
@@ -90,21 +101,22 @@ export default function AttachmentBlock({
   }
 
   async function handleDownload() {
-    if (data.storagePath) {
-      try {
-        const url = await getSignedUrl(data.storagePath);
-        window.open(url, '_blank');
-      } catch {
-        if (data.url) window.open(data.url, '_blank');
-      }
-    } else if (data.url) {
-      window.open(data.url, '_blank');
+    if (!data.storagePath) return;
+    try {
+      const url = await getSignedUrl(data.storagePath);
+      window.open(url, '_blank');
+    } catch {
+      setError('Failed to generate download link');
     }
   }
 
   async function handleRemove() {
-    if (data.storagePath) {
-      await deleteFile(data.storagePath).catch(() => {});
+    if (data.attachmentId) {
+      try {
+        await archiveAttachment(data.attachmentId);
+      } catch {
+        // Allow UI removal even if archive fails
+      }
     }
     onUpdate(DEFAULT_CONTENT);
   }
@@ -116,7 +128,7 @@ export default function AttachmentBlock({
     if (file) handleFile(file);
   }
 
-  if (!data.url && !data.storagePath) {
+  if (!data.storagePath && !data.attachmentId) {
     return (
       <div
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -126,31 +138,16 @@ export default function AttachmentBlock({
         className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors ${
           uploading ? 'pointer-events-none' : 'cursor-pointer'
         } ${
-          isDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:border-gray-400'
+          isDragging ? 'border-blue-400 bg-blue-50' : 'border-muted-foreground/25 bg-muted/30 hover:border-muted-foreground/40'
         } ${readOnly ? 'pointer-events-none opacity-60' : ''}`}
       >
         {uploading ? (
-          <>
-            <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
-            <p className="text-sm text-gray-500">Uploading...</p>
-          </>
+          <><Loader2 className="h-8 w-8 text-primary animate-spin" /><p className="text-sm text-muted-foreground">Uploading...</p></>
         ) : (
-          <>
-            <Upload className="h-8 w-8 text-gray-400" />
-            <p className="text-sm text-gray-500">Drop a file here or click to upload</p>
-            <p className="text-xs text-gray-400">Any file type accepted</p>
-          </>
+          <><Upload className="h-8 w-8 text-muted-foreground/50" /><p className="text-sm text-muted-foreground">Drop a file here or click to upload</p></>
         )}
-        {error && <p className="text-xs text-red-500">{error}</p>}
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-          }}
-        />
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       </div>
     );
   }
@@ -158,74 +155,44 @@ export default function AttachmentBlock({
   const typeLabel = getFileIcon(data.mimeType);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="flex items-center gap-3 p-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-100 text-xs font-bold text-gray-500">
+    <div className="rounded-lg border border-border bg-background">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold text-muted-foreground">
           {typeLabel}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="truncate text-sm font-medium text-gray-900">{data.displayName || data.filename}</p>
-          <p className="text-xs text-gray-500">
-            {data.mimeType} &middot; {formatFileSize(data.fileSize)}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="truncate text-sm font-medium text-foreground">{data.displayName || data.filename}</p>
+            {data.versionNumber > 1 && (
+              <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-mono text-muted-foreground">v{data.versionNumber}</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">{formatFileSize(data.fileSize)}</p>
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleDownload}
-            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            title="Download"
-          >
+        <div className="flex items-center gap-0.5">
+          <button onClick={handleDownload} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Download">
             <Download className="h-4 w-4" />
           </button>
           {!readOnly && (
             <>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                title="Replace file"
-                disabled={uploading}
-              >
+              <button onClick={() => fileInputRef.current?.click()} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Replace (new version)" disabled={uploading}>
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               </button>
-              <button
-                onClick={handleRemove}
-                className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                title="Remove"
-              >
+              <button onClick={handleRemove} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive" title="Remove">
                 <X className="h-4 w-4" />
               </button>
             </>
           )}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-          }}
-        />
+        <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       </div>
-      {error && (
-        <div className="border-t border-red-100 px-3 py-1.5">
-          <p className="text-xs text-red-500">{error}</p>
-        </div>
-      )}
+      {error && <div className="border-t border-destructive/20 px-3 py-1.5"><p className="text-xs text-destructive">{error}</p></div>}
       {!readOnly ? (
-        <div className="border-t border-gray-100 px-3 py-2">
-          <input
-            type="text"
-            value={data.caption}
-            onChange={(e) => onUpdate({ ...data, caption: e.target.value })}
-            placeholder="Add a caption..."
-            className="w-full text-xs text-gray-600 bg-transparent outline-none placeholder:text-gray-400"
-          />
+        <div className="border-t border-border px-3 py-2">
+          <input type="text" value={data.caption} onChange={(e) => onUpdate({ ...data, caption: e.target.value })} placeholder="Add a caption..." className="w-full text-xs text-muted-foreground bg-transparent outline-none placeholder:text-muted-foreground/50" />
         </div>
       ) : data.caption ? (
-        <div className="border-t border-gray-100 px-3 py-2">
-          <p className="text-xs text-gray-600 italic">{data.caption}</p>
-        </div>
+        <div className="border-t border-border px-3 py-2"><p className="text-xs text-muted-foreground italic">{data.caption}</p></div>
       ) : null}
     </div>
   );

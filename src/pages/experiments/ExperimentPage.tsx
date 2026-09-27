@@ -88,7 +88,7 @@ export default function ExperimentPage() {
     );
   }
 
-  const readOnly = !!currentExperiment.is_locked;
+  const readOnly = !!currentExperiment.is_locked || !['draft', 'in_progress', 'changes_requested'].includes(currentExperiment.status);
 
   const sidebarContent = (
     <Tabs

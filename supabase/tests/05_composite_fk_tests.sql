@@ -1,55 +1,69 @@
--- =============================================================
--- 05_composite_fk_tests.sql — Cross-experiment FK integrity
--- Self-contained fixtures
--- =============================================================
+-- 05_composite_fk_tests.sql: cross-experiment FK integrity for reviews + signatures
 BEGIN;
-CREATE EXTENSION IF NOT EXISTS pgtap;
-
 SELECT plan(2);
 
 DO $$
 DECLARE
-  v_owner uuid := 'a0000000-0000-0000-0000-000000000001';
-  v_ws    uuid := 'b0000000-0000-0000-0000-000000000001';
-  v_nb    uuid := 'c0000000-0000-0000-0000-000000000001';
-  v_exp_a uuid := 'd0000000-0000-0000-0000-00000000000a';
-  v_exp_b uuid := 'd0000000-0000-0000-0000-00000000000b';
-  v_rev_a uuid := 'f0000000-0000-0000-0000-00000000000a';
-  v_rev_b uuid := 'f0000000-0000-0000-0000-00000000000b';
+  v_user_id uuid := gen_random_uuid();
+  v_ws_id uuid;
+  v_nb_id uuid;
+  v_exp1_id uuid;
+  v_exp2_id uuid;
+  v_rev1_id uuid;
 BEGIN
-  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role)
-  VALUES (v_owner, 'owner@fk.test', crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated')
-  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO auth.users (id, email, role, aud, instance_id)
+  VALUES (v_user_id, 'fk@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
+  INSERT INTO public.profiles (id, email, display_name) VALUES (v_user_id, 'fk@test.com', 'FK Tester');
 
-  INSERT INTO public.workspaces (id, name, created_by) VALUES (v_ws, 'FK Workspace', v_owner) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (v_nb, v_ws, 'FK Notebook', v_owner) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.workspaces (id, name, created_by) VALUES (gen_random_uuid(), 'FK WS', v_user_id)
+  RETURNING id INTO v_ws_id;
+  INSERT INTO public.workspace_members (workspace_id, user_id, role) VALUES (v_ws_id, v_user_id, 'owner');
 
-  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-  VALUES (v_exp_a, v_ws, v_nb, 'Exp A', 'draft', false, false, v_owner) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-  VALUES (v_exp_b, v_ws, v_nb, 'Exp B', 'draft', false, false, v_owner) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (gen_random_uuid(), v_ws_id, 'FK NB', v_user_id)
+  RETURNING id INTO v_nb_id;
 
-  INSERT INTO public.experiment_revisions (id, experiment_id, revision_number, snapshot, content_hash, change_summary, change_type, created_by)
-  VALUES (v_rev_a, v_exp_a, 1, '{}'::jsonb, 'hash_a', 'Init', 'checkpoint', v_owner) ON CONFLICT DO NOTHING;
-  INSERT INTO public.experiment_revisions (id, experiment_id, revision_number, snapshot, content_hash, change_summary, change_type, created_by)
-  VALUES (v_rev_b, v_exp_b, 1, '{}'::jsonb, 'hash_b', 'Init', 'checkpoint', v_owner) ON CONFLICT DO NOTHING;
-END;
-$$;
+  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, created_by, experiment_id)
+  VALUES (gen_random_uuid(), v_ws_id, v_nb_id, 'Exp1', v_user_id, 'FK-001') RETURNING id INTO v_exp1_id;
+  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, created_by, experiment_id)
+  VALUES (gen_random_uuid(), v_ws_id, v_nb_id, 'Exp2', v_user_id, 'FK-002') RETURNING id INTO v_exp2_id;
 
--- Test 1: Review with revision from different experiment
+  INSERT INTO public.experiment_revisions (id, experiment_id, revision_number, change_type, created_by)
+  VALUES (gen_random_uuid(), v_exp1_id, 1, 'created', v_user_id) RETURNING id INTO v_rev1_id;
+
+  PERFORM set_config('test.user_id', v_user_id::text, true);
+  PERFORM set_config('test.exp1_id', v_exp1_id::text, true);
+  PERFORM set_config('test.exp2_id', v_exp2_id::text, true);
+  PERFORM set_config('test.rev1_id', v_rev1_id::text, true);
+END $$;
+
+-- Cross-experiment review: revision belongs to exp1, but review claims exp2
 SELECT throws_ok(
-  $$ INSERT INTO public.reviews (experiment_id, reviewer_id, revision_number, experiment_revision_id, status, comment)
-     VALUES ('d0000000-0000-0000-0000-00000000000b', 'a0000000-0000-0000-0000-000000000001', 1,
-             'f0000000-0000-0000-0000-00000000000a', 'pending', 'cross') $$,
-  '23503', NULL, 'review with cross-experiment revision rejected'
+  $$ INSERT INTO public.reviews (experiment_id, reviewer_id, revision_number, experiment_revision_id, status)
+     VALUES (
+       current_setting('test.exp2_id')::uuid,
+       current_setting('test.user_id')::uuid,
+       1,
+       current_setting('test.rev1_id')::uuid,
+       'pending'
+     ) $$,
+  '23503',
+  NULL,
+  'Cross-experiment review FK violation caught'
 );
 
--- Test 2: Signature with revision from different experiment
+-- Cross-experiment signature: revision belongs to exp1, but signature claims exp2
 SELECT throws_ok(
-  $$ INSERT INTO public.signatures (experiment_id, signer_id, revision_number, experiment_revision_id, content_hash, declaration)
-     VALUES ('d0000000-0000-0000-0000-00000000000b', 'a0000000-0000-0000-0000-000000000001', 1,
-             'f0000000-0000-0000-0000-00000000000a', 'hash_x', 'I declare') $$,
-  '23503', NULL, 'signature with cross-experiment revision rejected'
+  $$ INSERT INTO public.signatures (experiment_id, signer_id, revision_number, experiment_revision_id, content_hash)
+     VALUES (
+       current_setting('test.exp2_id')::uuid,
+       current_setting('test.user_id')::uuid,
+       1,
+       current_setting('test.rev1_id')::uuid,
+       'fakehash'
+     ) $$,
+  '23503',
+  NULL,
+  'Cross-experiment signature FK violation caught'
 );
 
 SELECT * FROM finish();

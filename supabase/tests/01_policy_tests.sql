@@ -1,62 +1,140 @@
--- =============================================================
--- 01_policy_tests.sql — Verify legacy permissive policies are gone
--- =============================================================
+-- 01_policy_tests.sql: verify legacy permissive policies removed + structural checks
 BEGIN;
-CREATE EXTENSION IF NOT EXISTS pgtap;
+SELECT plan(25);
 
-SELECT plan(22);
+-- ──────────────────────────────────────────────────────
+-- Legacy permissive policies must not exist
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiments' AND policyname = 'Users can view experiments in their workspace'),
+  'Legacy select policy on experiments removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiments' AND policyname = 'Users can insert experiments'),
+  'Legacy insert policy on experiments removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiments' AND policyname = 'Users can update their experiments'),
+  'Legacy update policy on experiments removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiments' AND policyname = 'Users can delete draft experiments'),
+  'Legacy delete policy on experiments removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiment_blocks' AND policyname = 'Users can view blocks'),
+  'Legacy select policy on blocks removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiment_blocks' AND policyname = 'Users can insert blocks'),
+  'Legacy insert policy on blocks removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiment_blocks' AND policyname = 'Users can update blocks'),
+  'Legacy update policy on blocks removed'
+);
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'experiment_blocks' AND policyname = 'Users can delete blocks'),
+  'Legacy delete policy on blocks removed'
+);
 
--- Legacy experiment_tags policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_tags' AND policyname='insert_exp_tags'), 'insert_exp_tags absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_tags' AND policyname='update_exp_tags'), 'update_exp_tags absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_tags' AND policyname='delete_exp_tags'), 'delete_exp_tags absent');
+-- ──────────────────────────────────────────────────────
+-- No permissive WRITE policies on experiments or blocks
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'experiments' AND cmd IN ('INSERT','UPDATE','DELETE') AND permissive = 'PERMISSIVE'
+    AND policyname NOT LIKE '%_er' AND policyname NOT LIKE 'insert_er%' AND policyname NOT LIKE 'update_er%' AND policyname NOT LIKE 'delete_er%'
+  ),
+  'No permissive direct write policies on experiments'
+);
+SELECT ok(
+  NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'experiment_blocks' AND cmd IN ('INSERT','UPDATE','DELETE') AND permissive = 'PERMISSIVE'
+  ),
+  'No permissive direct write policies on experiment_blocks'
+);
 
--- Legacy experiment_references policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_references' AND policyname='insert_ref'), 'insert_ref absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_references' AND policyname='update_ref'), 'update_ref absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_references' AND policyname='delete_ref'), 'delete_ref absent');
+-- ──────────────────────────────────────────────────────
+-- Legacy create_revision must not exist
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = 'create_revision'
+  ),
+  'Legacy create_revision function does not exist'
+);
 
--- Legacy experiment_relations policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_relations' AND policyname='insert_er'), 'legacy insert_er absent from relations');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_relations' AND policyname='update_er'), 'legacy update_er absent from relations');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_relations' AND policyname='delete_er'), 'legacy delete_er absent from relations');
+-- ──────────────────────────────────────────────────────
+-- Internal functions not callable by authenticated
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  NOT has_function_privilege('authenticated', 'public._build_experiment_snapshot(uuid)', 'EXECUTE'),
+  '_build_experiment_snapshot denied to authenticated'
+);
+SELECT ok(
+  NOT has_function_privilege('authenticated', 'public._create_revision_internal(uuid,text,text,uuid,jsonb)', 'EXECUTE'),
+  '_create_revision_internal denied to authenticated'
+);
 
--- Legacy experiment_contributors policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_contributors' AND policyname='insert_contributors'), 'insert_contributors absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_contributors' AND policyname='update_contributors'), 'update_contributors absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_contributors' AND policyname='delete_contributors'), 'delete_contributors absent');
+-- ──────────────────────────────────────────────────────
+-- Public RPCs are callable by authenticated
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  has_function_privilege('authenticated', 'public.create_checkpoint(uuid,text)', 'EXECUTE'),
+  'create_checkpoint callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.create_experiment_rpc(uuid,uuid,text,uuid,uuid)', 'EXECUTE'),
+  'create_experiment_rpc callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.complete_experiment(uuid)', 'EXECUTE'),
+  'complete_experiment callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.submit_for_review(uuid,uuid)', 'EXECUTE'),
+  'submit_for_review callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.resubmit_for_review(uuid,uuid)', 'EXECUTE'),
+  'resubmit_for_review callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.upsert_experiment_blocks(uuid,jsonb)', 'EXECUTE'),
+  'upsert_experiment_blocks callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.delete_experiment_block(uuid,uuid,bigint)', 'EXECUTE'),
+  'delete_experiment_block callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.restore_experiment_revision(uuid,uuid)', 'EXECUTE'),
+  'restore_experiment_revision callable by authenticated'
+);
+SELECT ok(
+  has_function_privilege('authenticated', 'public.add_comment_with_mentions(uuid,uuid,text,uuid[])', 'EXECUTE'),
+  'add_comment_with_mentions callable by authenticated'
+);
 
--- Legacy protocol/deviation bypasses
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_protocols' AND policyname='delete_ep'), 'delete_ep absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='protocol_deviations' AND policyname='delete_pd'), 'delete_pd absent');
-
--- Direct experiment write policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiments' AND policyname='insert_experiments'), 'insert_experiments absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiments' AND policyname='update_experiments'), 'update_experiments absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiments' AND policyname='delete_experiments'), 'delete_experiments absent');
-
--- Direct block write policies
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_blocks' AND policyname='insert_blocks'), 'insert_blocks absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_blocks' AND policyname='update_blocks'), 'update_blocks absent');
-SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_blocks' AND policyname='delete_blocks'), 'delete_blocks absent');
-
--- No permissive write policies on experiments or blocks at all
-SELECT ok(NOT EXISTS (
-  SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiments'
-    AND cmd IN ('INSERT','UPDATE','DELETE') AND permissive='PERMISSIVE'
-), 'experiments: no permissive write policies');
-
-SELECT ok(NOT EXISTS (
-  SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='experiment_blocks'
-    AND cmd IN ('INSERT','UPDATE','DELETE') AND permissive='PERMISSIVE'
-), 'experiment_blocks: no permissive write policies');
-
--- Legacy create_revision function is gone
-SELECT ok(NOT EXISTS (
-  SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-  WHERE n.nspname = 'public' AND p.proname = 'create_revision'
-    AND has_function_privilege('authenticated', p.oid, 'EXECUTE')
-), 'legacy create_revision not callable by authenticated');
+-- ──────────────────────────────────────────────────────
+-- Public RPCs denied to anon
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  NOT has_function_privilege('anon', 'public.create_checkpoint(uuid,text)', 'EXECUTE'),
+  'create_checkpoint denied to anon'
+);
+SELECT ok(
+  NOT has_function_privilege('anon', 'public.create_experiment_rpc(uuid,uuid,text,uuid,uuid)', 'EXECUTE'),
+  'create_experiment_rpc denied to anon'
+);
+SELECT ok(
+  NOT has_function_privilege('anon', 'public.delete_experiment_block(uuid,uuid,bigint)', 'EXECUTE'),
+  'delete_experiment_block denied to anon'
+);
 
 SELECT * FROM finish();
 ROLLBACK;

@@ -11,34 +11,43 @@ import type {
 } from '@/lib/types';
 
 // ──────────────────────────────────────────────
-// Debounced autosave helpers
+// Awaitable save queue
 // ──────────────────────────────────────────────
 
 const pendingBlockChanges = new Map<string, ExperimentBlock>();
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let activeExperimentId: string | null = null;
-let activeEditorSessionId: string | null = null;
 const AUTOSAVE_DELAY_MS = 2000;
+
+let activeSavePromise: Promise<void> | null = null;
 
 function scheduleSave() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
-    flushPendingBlocks();
+    void flushPendingBlocks();
   }, AUTOSAVE_DELAY_MS);
 }
 
-let saveInFlight = false;
+async function flushPendingBlocks(options?: { throwOnError?: boolean }): Promise<void> {
+  if (pendingBlockChanges.size === 0) {
+    if (activeSavePromise) await activeSavePromise;
+    return;
+  }
 
-async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
-  if (pendingBlockChanges.size === 0) return;
-  if (saveInFlight) return; // single-flight: don't overlap
+  if (activeSavePromise) {
+    await activeSavePromise;
+    if (pendingBlockChanges.size === 0) return;
+  }
 
   const blocksToSave = Array.from(pendingBlockChanges.values());
   pendingBlockChanges.clear();
-  saveInFlight = true;
 
   const state = useExperimentStore.getState();
   state._setSaveState('saving');
+
+  let resolve: () => void;
+  let reject: (e: unknown) => void;
+  activeSavePromise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
 
   try {
     const expId = activeExperimentId;
@@ -57,7 +66,6 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
 
     if (error) throw error;
 
-    // Merge authoritative server versions into state
     const serverVersions = new Map<string, number>();
     const result = data as { updated: Array<{ id: string; row_version: number }> };
     if (result?.updated) {
@@ -71,7 +79,6 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
       blocks: currentBlocks.map((b) => {
         const newVersion = serverVersions.get(b.id);
         if (newVersion != null) {
-          // Rebase any pending edits that still carry the old version
           const pending = pendingBlockChanges.get(b.id);
           if (pending) {
             pendingBlockChanges.set(b.id, { ...pending, row_version: newVersion });
@@ -82,37 +89,51 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
       }),
     });
 
-    saveInFlight = false;
-    state._setSaveState('saved');
-    state._setLastSaved(new Date());
+    activeSavePromise = null;
 
-    // If new pending edits accumulated during save, schedule another flush
     if (pendingBlockChanges.size > 0) {
+      state._setSaveState('dirty');
       scheduleSave();
+    } else {
+      state._setSaveState('saved');
     }
+    state._setLastSaved(new Date());
+    resolve!();
   } catch (error) {
-    saveInFlight = false;
+    activeSavePromise = null;
     const isConflict = error instanceof Object && 'code' in error && (error as { code: string }).code === '40001';
     state._setSaveState(isConflict ? 'conflict' : 'error');
     console.error('Autosave failed:', error);
-    // Restore blocks to pending for retry (don't overwrite newer pending edits)
     for (const b of blocksToSave) {
       if (!pendingBlockChanges.has(b.id)) {
         pendingBlockChanges.set(b.id, b);
       }
     }
     if (options?.throwOnError) {
+      reject!(error);
       throw error;
     }
+    resolve!();
     if (!isConflict) {
       scheduleSave();
     }
   }
 }
 
-// beforeunload handler — flush on navigate/close
-function handleBeforeUnload(e: BeforeUnloadEvent) {
+async function drainPendingSaves(): Promise<void> {
+  const MAX_DRAIN = 5;
+  for (let i = 0; i < MAX_DRAIN; i++) {
+    if (activeSavePromise) await activeSavePromise;
+    if (pendingBlockChanges.size === 0) return;
+    await flushPendingBlocks({ throwOnError: true });
+  }
   if (pendingBlockChanges.size > 0) {
+    throw new Error('Could not drain pending saves after multiple attempts');
+  }
+}
+
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  if (pendingBlockChanges.size > 0 || activeSavePromise) {
     e.preventDefault();
   }
 }
@@ -121,18 +142,6 @@ async function startAutosaveSession(experimentId: string) {
   if (activeExperimentId === experimentId) return;
   await stopAutosaveSession();
   activeExperimentId = experimentId;
-
-  try {
-    const { data, error } = await supabase.rpc('claim_editor_session', {
-      p_experiment_id: experimentId,
-    });
-    if (!error && data) {
-      activeEditorSessionId = (data as { session_id: string }).session_id;
-    }
-  } catch {
-    // Non-fatal: session claim may fail for read-only experiments
-  }
-
   window.addEventListener('beforeunload', handleBeforeUnload);
 }
 
@@ -140,25 +149,15 @@ async function stopAutosaveSession() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = null;
   await flushPendingBlocks();
-
-  if (activeExperimentId && activeEditorSessionId) {
-    try {
-      await supabase.rpc('release_editor_session', {
-        p_experiment_id: activeExperimentId,
-      });
-    } catch {
-      // Non-fatal
-    }
-  }
-
   activeExperimentId = null;
-  activeEditorSessionId = null;
   window.removeEventListener('beforeunload', handleBeforeUnload);
 }
 
 // ──────────────────────────────────────────────
-// Store
+// Store types
 // ──────────────────────────────────────────────
+
+type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
 
 interface ExperimentState {
   experiments: Experiment[];
@@ -166,14 +165,14 @@ interface ExperimentState {
   blocks: ExperimentBlock[];
   loading: boolean;
   saving: boolean;
-  saveState: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
+  saveState: SaveState;
   lastSaved: Date | null;
   filters: ExperimentFilters;
 }
 
 interface ExperimentActions {
   _setSaving: (saving: boolean) => void;
-  _setSaveState: (state: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict') => void;
+  _setSaveState: (state: SaveState) => void;
   _setLastSaved: (date: Date) => void;
 
   fetchExperiments: (workspaceId: string, filters?: ExperimentFilters) => Promise<void>;
@@ -195,7 +194,6 @@ interface ExperimentActions {
   archiveExperiment: (id: string) => Promise<void>;
   restoreExperiment: (id: string) => Promise<void>;
 
-  // Domain status actions (server-side RPCs)
   startExperiment: (id: string) => Promise<void>;
   completeExperiment: (id: string) => Promise<void>;
   reopenExperiment: (id: string) => Promise<void>;
@@ -205,7 +203,6 @@ interface ExperimentActions {
   signAndLock: (id: string) => Promise<void>;
   createAmendment: (id: string, reason: string) => Promise<{ id: string } | null>;
 
-  // Blocks
   fetchBlocks: (experimentId: string) => Promise<void>;
   addBlock: (
     experimentId: string,
@@ -218,22 +215,18 @@ interface ExperimentActions {
   reorderBlocks: (experimentId: string, blockId: string, newOrderKey: string) => Promise<void>;
   saveBlocks: () => Promise<void>;
 
-  // Favorites & Tags
   toggleFavorite: (experimentId: string) => Promise<void>;
   addTag: (experimentId: string, tagName: string) => Promise<void>;
   removeTag: (experimentId: string, tagId: string) => Promise<void>;
 
-  // Revisions (server-side RPC)
   createRevision: (
     experimentId: string,
     changeSummary: string
   ) => Promise<{ revision_number: number } | null>;
 
-  // Filters
   setFilters: (filters: Partial<ExperimentFilters>) => void;
   clearFilters: () => void;
 
-  // Session lifecycle
   initSession: (experimentId: string) => void;
   teardownSession: () => Promise<void>;
 }
@@ -256,7 +249,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   blocks: [],
   loading: false,
   saving: false,
-  saveState: 'clean' as const,
+  saveState: 'clean' as SaveState,
   lastSaved: null,
   filters: { ...DEFAULT_FILTERS },
 
@@ -264,13 +257,11 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   _setSaveState: (saveState) => set({ saveState, saving: saveState === 'saving' }),
   _setLastSaved: (date) => set({ lastSaved: date }),
 
-  // ── Session lifecycle ────────────────────────
-  initSession: (experimentId) => { startAutosaveSession(experimentId); },
+  initSession: (experimentId) => { void startAutosaveSession(experimentId); },
   teardownSession: async () => {
     try {
       await stopAutosaveSession();
     } catch {
-      // If flush failed, don't clear state — keep dirty blocks visible
       if (pendingBlockChanges.size > 0) return;
     }
     set({ currentExperiment: null, blocks: [], saveState: 'clean' });
@@ -427,7 +418,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   completeExperiment: async (id) => {
-    await flushPendingBlocks({ throwOnError: true });
+    await drainPendingSaves();
     const { error } = await supabase.rpc('complete_experiment', { p_experiment_id: id });
     if (error) throw error;
     await get().fetchExperiment(id);
@@ -440,7 +431,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   submitForReview: async (id, reviewerId) => {
-    await flushPendingBlocks({ throwOnError: true });
+    await drainPendingSaves();
     const { data, error } = await supabase.rpc('submit_for_review', {
       p_experiment_id: id,
       p_reviewer_id: reviewerId,
@@ -470,7 +461,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   signAndLock: async (id) => {
-    await flushPendingBlocks({ throwOnError: true });
+    await drainPendingSaves();
     const { data, error } = await supabase.rpc('sign_and_lock_experiment', {
       p_experiment_id: id,
     });
@@ -541,7 +532,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     set((state) => {
       const updatedBlocks = state.blocks.map((b) => {
         if (b.id === blockId) {
-          const updated = { ...b, content, updated_at: new Date().toISOString(), row_version: b.row_version };
+          const updated = { ...b, content, updated_at: new Date().toISOString() };
           pendingBlockChanges.set(blockId, updated);
           return updated;
         }
@@ -575,26 +566,43 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     });
 
     const block = get().blocks.find((b) => b.id === blockId);
-    const { error } = await supabase.rpc('upsert_experiment_blocks', {
+    if (!block) return;
+
+    const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
       p_experiment_id: experimentId,
       p_blocks: [{
         id: blockId,
-        type: block?.type ?? 'paragraph',
-        content: block?.content ?? {},
+        type: block.type,
+        content: block.content,
         order_key: newOrderKey,
-        row_version: block?.row_version ?? 1,
+        row_version: block.row_version,
       }],
     });
 
     if (error) {
       console.error('Failed to reorder block:', error);
       await get().fetchBlocks(experimentId);
+      return;
+    }
+
+    const result = data as { updated: Array<{ id: string; row_version: number }> } | null;
+    if (result?.updated) {
+      const serverVersions = new Map<string, number>();
+      for (const sv of result.updated) {
+        serverVersions.set(sv.id, sv.row_version);
+      }
+      set((state) => ({
+        blocks: state.blocks.map((b) => {
+          const newVersion = serverVersions.get(b.id);
+          return newVersion != null ? { ...b, row_version: newVersion } : b;
+        }),
+      }));
     }
   },
 
   saveBlocks: async () => {
     if (autosaveTimer) clearTimeout(autosaveTimer);
-    await flushPendingBlocks({ throwOnError: true });
+    await drainPendingSaves();
   },
 
   duplicateExperiment: async (id, options = {}) => {
@@ -749,7 +757,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   // ── Revisions (server-side RPC) ──────────────
 
   createRevision: async (experimentId, changeSummary) => {
-    await flushPendingBlocks({ throwOnError: true });
+    await drainPendingSaves();
     const { data, error } = await supabase.rpc('create_checkpoint', {
       p_experiment_id: experimentId,
       p_change_summary: changeSummary,

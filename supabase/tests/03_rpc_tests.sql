@@ -1,219 +1,336 @@
--- =============================================================
--- 03_rpc_tests.sql — RPC authorization + domain logic tests
--- Self-contained fixtures, uses domain RPCs for test data
--- =============================================================
+-- 03_rpc_tests.sql: test domain RPCs with real data as superuser
 BEGIN;
-CREATE EXTENSION IF NOT EXISTS pgtap;
+SELECT plan(14);
 
-SELECT plan(10);
-
--- ─────────────────────────────────────────────────
--- Fixtures: users, workspace, notebook via superuser
--- ─────────────────────────────────────────────────
+-- ──────────────────────────────────────────────────────
+-- Setup test data hierarchy
+-- ──────────────────────────────────────────────────────
 DO $$
 DECLARE
-  v_owner  uuid := 'a0000000-0000-0000-0000-000000000001';
-  v_editor uuid := 'a0000000-0000-0000-0000-000000000002';
-  v_guest  uuid := 'a0000000-0000-0000-0000-000000000003';
-  v_ws     uuid := 'b0000000-0000-0000-0000-000000000001';
-  v_nb     uuid := 'c0000000-0000-0000-0000-000000000001';
-  v_other_ws uuid := 'b0000000-0000-0000-0000-000000000099';
-  v_other_nb uuid := 'c0000000-0000-0000-0000-000000000099';
+  v_user_id uuid := gen_random_uuid();
+  v_ws_id uuid;
+  v_nb_id uuid;
 BEGIN
-  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role) VALUES
-    (v_owner,  'owner@rpc.test',  crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated'),
-    (v_editor, 'editor@rpc.test', crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated'),
-    (v_guest,  'guest@rpc.test',  crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated')
-  ON CONFLICT (id) DO NOTHING;
+  -- Create user
+  INSERT INTO auth.users (id, email, role, aud, instance_id)
+  VALUES (v_user_id, 'rpc_test@example.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
+  INSERT INTO public.profiles (id, email, display_name) VALUES (v_user_id, 'rpc_test@example.com', 'RPC Tester');
 
-  INSERT INTO public.workspaces (id, name, created_by) VALUES (v_ws, 'RPC Workspace', v_owner) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.workspace_members (workspace_id, user_id, role, invited_by) VALUES
-    (v_ws, v_editor, 'member', v_owner),
-    (v_ws, v_guest,  'guest',  v_owner)
-  ON CONFLICT DO NOTHING;
-  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (v_nb, v_ws, 'RPC Notebook', v_owner) ON CONFLICT (id) DO NOTHING;
+  -- Create workspace + membership
+  INSERT INTO public.workspaces (id, name, created_by) VALUES (gen_random_uuid(), 'RPC Test WS', v_user_id)
+  RETURNING id INTO v_ws_id;
+  INSERT INTO public.workspace_members (workspace_id, user_id, role) VALUES (v_ws_id, v_user_id, 'owner');
 
-  INSERT INTO public.workspaces (id, name, created_by) VALUES (v_other_ws, 'Other WS', v_owner) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (v_other_nb, v_other_ws, 'Other NB', v_owner) ON CONFLICT (id) DO NOTHING;
-END;
-$$;
+  -- Create notebook
+  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (gen_random_uuid(), v_ws_id, 'Test NB', v_user_id)
+  RETURNING id INTO v_nb_id;
 
--- ─────────────────────────────────────────────────
--- Helper to set authenticated context
--- ─────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION _test_set_auth(uid uuid) RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', uid::text, 'role', 'authenticated', 'aud', 'authenticated')::text, true);
-  PERFORM set_config('role', 'authenticated', true);
-END;
-$$;
+  -- Store IDs for use in tests
+  PERFORM set_config('test.user_id', v_user_id::text, true);
+  PERFORM set_config('test.workspace_id', v_ws_id::text, true);
+  PERFORM set_config('test.notebook_id', v_nb_id::text, true);
+END $$;
 
--- ─────────────────────────────────────────────────
--- Test 1: _create_revision_internal NOT callable by authenticated
--- ─────────────────────────────────────────────────
-SELECT throws_ok(
-  $$ DO $i$ BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    PERFORM public._create_revision_internal('d0000000-0000-0000-0000-000000000001', 'test', 'checkpoint', 'a0000000-0000-0000-0000-000000000002');
-  END; $i$ $$,
-  '42501', NULL, '_create_revision_internal denied for authenticated'
-);
-RESET ROLE;
-
--- ─────────────────────────────────────────────────
--- Test 2: _build_experiment_snapshot NOT callable by authenticated
--- ─────────────────────────────────────────────────
-SELECT throws_ok(
-  $$ DO $i$ BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    PERFORM public._build_experiment_snapshot('d0000000-0000-0000-0000-000000000001');
-  END; $i$ $$,
-  '42501', NULL, '_build_experiment_snapshot denied for authenticated'
-);
-RESET ROLE;
-
--- ─────────────────────────────────────────────────
--- Test 3-4: create_experiment_rpc + create_checkpoint
--- ─────────────────────────────────────────────────
-DO $$
-DECLARE v_result jsonb;
-BEGIN
-  PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-  v_result := public.create_experiment_rpc(
-    'b0000000-0000-0000-0000-000000000001',
-    'c0000000-0000-0000-0000-000000000001',
-    'RPC Test Experiment'
-  );
-  PERFORM set_config('test.exp_id', v_result->>'id', true);
-  RESET ROLE;
-END;
-$$;
-
--- Test 3: experiment was created with initial revision
+-- ──────────────────────────────────────────────────────
+-- Test 1: Internal functions denied to authenticated role
+-- ──────────────────────────────────────────────────────
 SELECT ok(
-  EXISTS (
-    SELECT 1 FROM public.experiment_revisions
-    WHERE experiment_id = (current_setting('test.exp_id'))::uuid
-      AND change_type = 'created' AND revision_number = 1
-  ),
-  'create_experiment_rpc produces initial revision v1'
+  NOT has_function_privilege('authenticated', 'public._build_experiment_snapshot(uuid)', 'EXECUTE'),
+  'Snapshot builder denied to authenticated'
+);
+SELECT ok(
+  NOT has_function_privilege('authenticated', 'public._create_revision_internal(uuid,text,text,uuid,jsonb)', 'EXECUTE'),
+  'Internal revision creator denied to authenticated'
 );
 
--- Test 4: create_checkpoint on draft succeeds
-SELECT lives_ok(
-  $$ DO $i$ DECLARE v_result jsonb; BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    v_result := public.create_checkpoint((current_setting('test.exp_id'))::uuid, 'test checkpoint');
-    RESET ROLE;
-  END; $i$ $$,
-  'create_checkpoint succeeds on draft'
-);
+-- ──────────────────────────────────────────────────────
+-- Test 2: create_experiment_rpc produces revision v1
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_result jsonb;
+  v_exp_id uuid;
+  v_rev_count int;
+  v_rev_number int;
+  v_hash text;
+BEGIN
+  -- Set auth context
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', current_setting('test.user_id'),
+    'role', 'authenticated'
+  )::text, true);
+  PERFORM set_config('role', 'authenticated', true);
 
--- Test 5: checkpoint on locked experiment fails
-DO $$ BEGIN
-  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-  VALUES ('d0000000-0000-0000-0000-0000000000ff', 'b0000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001',
-    'Locked Exp', 'locked', true, false, 'a0000000-0000-0000-0000-000000000001');
-END; $$;
+  v_result := public.create_experiment_rpc(
+    current_setting('test.workspace_id')::uuid,
+    current_setting('test.notebook_id')::uuid,
+    'Test Experiment'
+  );
 
-SELECT throws_ok(
-  $$ DO $i$ DECLARE v_result jsonb; BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    v_result := public.create_checkpoint('d0000000-0000-0000-0000-0000000000ff', 'fail');
-  END; $i$ $$,
-  NULL, NULL, 'create_checkpoint fails on locked experiment'
-);
-RESET ROLE;
+  v_exp_id := (v_result->>'id')::uuid;
+  PERFORM set_config('test.experiment_id', v_exp_id::text, true);
 
--- ─────────────────────────────────────────────────
--- Test 6: update_experiment_metadata rejects cross-workspace notebook
--- ─────────────────────────────────────────────────
-SELECT throws_ok(
-  $$ DO $i$ DECLARE v_result jsonb; BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    v_result := public.update_experiment_metadata(
-      (current_setting('test.exp_id'))::uuid,
-      p_notebook_id := 'c0000000-0000-0000-0000-000000000099'
-    );
-  END; $i$ $$,
-  NULL, NULL, 'metadata rejects cross-workspace notebook'
-);
-RESET ROLE;
+  SELECT count(*), max(revision_number) INTO v_rev_count, v_rev_number
+  FROM public.experiment_revisions WHERE experiment_id = v_exp_id;
 
--- Test 7: update_experiment_metadata succeeds
-SELECT lives_ok(
-  $$ DO $i$ DECLARE v_result jsonb; BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    v_result := public.update_experiment_metadata(
-      (current_setting('test.exp_id'))::uuid, p_title := 'Updated Title'
-    );
-    RESET ROLE;
-  END; $i$ $$,
-  'metadata update succeeds with valid data'
-);
+  SELECT content_hash INTO v_hash
+  FROM public.experiment_revisions WHERE experiment_id = v_exp_id AND revision_number = 1;
 
--- ─────────────────────────────────────────────────
--- Test 8: insert_experiment_block returns complete row with row_version
--- ─────────────────────────────────────────────────
+  -- Store for later tests
+  PERFORM set_config('test.initial_hash', COALESCE(v_hash, ''), true);
+
+  IF v_rev_count != 1 THEN RAISE EXCEPTION 'Expected 1 revision, got %', v_rev_count; END IF;
+  IF v_rev_number != 1 THEN RAISE EXCEPTION 'Expected revision 1, got %', v_rev_number; END IF;
+  IF v_hash IS NULL OR v_hash = '' THEN RAISE EXCEPTION 'Content hash is empty'; END IF;
+END $$;
+SELECT pass('create_experiment_rpc produces revision v1 with content hash');
+
+-- ──────────────────────────────────────────────────────
+-- Test 3: Snapshot excludes status and row_version
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_snap jsonb;
+BEGIN
+  v_snap := public._build_experiment_snapshot(current_setting('test.experiment_id')::uuid);
+
+  IF v_snap ? 'status' THEN RAISE EXCEPTION 'Snapshot should NOT contain status'; END IF;
+  IF v_snap ? 'row_version' THEN RAISE EXCEPTION 'Snapshot should NOT contain row_version'; END IF;
+  IF NOT (v_snap ? 'schema_version') THEN RAISE EXCEPTION 'Snapshot missing schema_version'; END IF;
+  IF NOT (v_snap ? 'title') THEN RAISE EXCEPTION 'Snapshot missing title'; END IF;
+  IF NOT (v_snap ? 'blocks') THEN RAISE EXCEPTION 'Snapshot missing blocks'; END IF;
+  IF NOT (v_snap ? 'tags') THEN RAISE EXCEPTION 'Snapshot missing tags'; END IF;
+  IF NOT (v_snap ? 'protocols') THEN RAISE EXCEPTION 'Snapshot missing protocols'; END IF;
+  IF NOT (v_snap ? 'deviations') THEN RAISE EXCEPTION 'Snapshot missing deviations'; END IF;
+  IF NOT (v_snap ? 'attachments') THEN RAISE EXCEPTION 'Snapshot missing attachments'; END IF;
+  IF NOT (v_snap ? 'references') THEN RAISE EXCEPTION 'Snapshot missing references'; END IF;
+  IF NOT (v_snap ? 'relations') THEN RAISE EXCEPTION 'Snapshot missing relations'; END IF;
+  IF NOT (v_snap ? 'contributors') THEN RAISE EXCEPTION 'Snapshot missing contributors'; END IF;
+END $$;
+SELECT pass('Snapshot excludes status/row_version, includes all scientific fields');
+
+-- ──────────────────────────────────────────────────────
+-- Test 4: Deterministic hash — rebuild without content change yields same hash
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_snap1 jsonb;
+  v_snap2 jsonb;
+  v_hash1 text;
+  v_hash2 text;
+BEGIN
+  v_snap1 := public._build_experiment_snapshot(current_setting('test.experiment_id')::uuid);
+  v_hash1 := encode(sha256(convert_to(v_snap1::text, 'UTF8')), 'hex');
+
+  v_snap2 := public._build_experiment_snapshot(current_setting('test.experiment_id')::uuid);
+  v_hash2 := encode(sha256(convert_to(v_snap2::text, 'UTF8')), 'hex');
+
+  IF v_hash1 != v_hash2 THEN
+    RAISE EXCEPTION 'Hashes differ: % vs %', v_hash1, v_hash2;
+  END IF;
+END $$;
+SELECT pass('Snapshot hash is deterministic');
+
+-- ──────────────────────────────────────────────────────
+-- Test 5: Status change does NOT change content hash
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_hash_before text;
+  v_hash_after text;
+  v_exp_id uuid := current_setting('test.experiment_id')::uuid;
+BEGIN
+  v_hash_before := encode(sha256(convert_to(
+    (public._build_experiment_snapshot(v_exp_id))::text, 'UTF8'
+  )), 'hex');
+
+  -- Change status directly (superuser bypass)
+  UPDATE public.experiments SET status = 'in_progress' WHERE id = v_exp_id;
+
+  v_hash_after := encode(sha256(convert_to(
+    (public._build_experiment_snapshot(v_exp_id))::text, 'UTF8'
+  )), 'hex');
+
+  IF v_hash_before != v_hash_after THEN
+    RAISE EXCEPTION 'Status change altered content hash: % vs %', v_hash_before, v_hash_after;
+  END IF;
+END $$;
+SELECT pass('Status change does not alter scientific content hash');
+
+-- ──────────────────────────────────────────────────────
+-- Test 6: Checkpoint works on editable experiment
+-- ──────────────────────────────────────────────────────
 DO $$
 DECLARE v_result jsonb;
 BEGIN
-  PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', current_setting('test.user_id'),
+    'role', 'authenticated'
+  )::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+
+  v_result := public.create_checkpoint(
+    current_setting('test.experiment_id')::uuid,
+    'Test checkpoint'
+  );
+  IF (v_result->>'revision_number')::int != 2 THEN
+    RAISE EXCEPTION 'Expected revision 2, got %', v_result->>'revision_number';
+  END IF;
+END $$;
+SELECT pass('Checkpoint creates revision v2');
+
+-- ──────────────────────────────────────────────────────
+-- Test 7: Checkpoint fails on non-editable experiment
+-- ──────────────────────────────────────────────────────
+DO $$
+BEGIN
+  UPDATE public.experiments SET status = 'completed'
+  WHERE id = current_setting('test.experiment_id')::uuid;
+END $$;
+
+SELECT throws_ok(
+  $$ SELECT public.create_checkpoint(current_setting('test.experiment_id')::uuid, 'Should fail') $$,
+  NULL,
+  'Experiment is not in an editable state',
+  'Checkpoint denied on completed experiment'
+);
+
+-- Reset to editable for further tests
+DO $$ BEGIN
+  UPDATE public.experiments SET status = 'in_progress'
+  WHERE id = current_setting('test.experiment_id')::uuid;
+END $$;
+
+-- ──────────────────────────────────────────────────────
+-- Test 8: Cross-workspace notebook rejected
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE v_other_nb uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO public.workspaces (id, name, created_by)
+  VALUES (gen_random_uuid(), 'Other WS', current_setting('test.user_id')::uuid);
+
+  INSERT INTO public.notebooks (id, workspace_id, name, created_by)
+  VALUES (v_other_nb,
+    (SELECT id FROM public.workspaces WHERE name = 'Other WS'),
+    'Other NB',
+    current_setting('test.user_id')::uuid);
+
+  PERFORM set_config('test.other_notebook_id', v_other_nb::text, true);
+END $$;
+
+SELECT throws_ok(
+  $$ SELECT public.create_experiment_rpc(
+    current_setting('test.workspace_id')::uuid,
+    current_setting('test.other_notebook_id')::uuid,
+    'Cross-workspace test'
+  ) $$,
+  NULL,
+  'Notebook does not belong to this workspace',
+  'Cross-workspace notebook rejected'
+);
+
+-- ──────────────────────────────────────────────────────
+-- Test 9: Metadata update validates notebook ownership
+-- ──────────────────────────────────────────────────────
+SELECT throws_ok(
+  $$ SELECT public.update_experiment_metadata(
+    current_setting('test.experiment_id')::uuid,
+    'Updated Title',
+    CURRENT_DATE,
+    current_setting('test.other_notebook_id')::uuid,
+    NULL
+  ) $$,
+  NULL,
+  NULL,
+  'Metadata update rejects cross-workspace notebook'
+);
+
+-- ──────────────────────────────────────────────────────
+-- Test 10: Block insert returns complete row
+-- ──────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_result jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', current_setting('test.user_id'),
+    'role', 'authenticated'
+  )::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+
   v_result := public.insert_experiment_block(
-    (current_setting('test.exp_id'))::uuid,
+    current_setting('test.experiment_id')::uuid,
     'paragraph',
-    '{"text":"hello"}'::jsonb,
+    '{"html":"test"}'::jsonb,
     'a0'
   );
-  PERFORM set_config('test.block_result', v_result::text, true);
-  RESET ROLE;
-END;
-$$;
 
+  IF NOT (v_result ? 'id') THEN RAISE EXCEPTION 'Block result missing id'; END IF;
+  IF NOT (v_result ? 'row_version') THEN RAISE EXCEPTION 'Block result missing row_version'; END IF;
+
+  PERFORM set_config('test.block_id', v_result->>'id', true);
+  PERFORM set_config('test.block_version', v_result->>'row_version', true);
+END $$;
+SELECT pass('insert_experiment_block returns id and row_version');
+
+-- ──────────────────────────────────────────────────────
+-- Test 11: Revision serialization — experiment locked FOR UPDATE
+-- ──────────────────────────────────────────────────────
 SELECT ok(
-  (current_setting('test.block_result')::jsonb)->>'row_version' IS NOT NULL
-    AND (current_setting('test.block_result')::jsonb)->>'id' IS NOT NULL
-    AND (current_setting('test.block_result')::jsonb)->>'order_key' IS NOT NULL,
-  'insert_experiment_block returns complete row with row_version'
+  EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = '_create_revision_internal'
+    AND p.prosrc LIKE '%FOR UPDATE%'
+  ),
+  'Revision internal function contains FOR UPDATE lock'
 );
 
--- ─────────────────────────────────────────────────
--- Test 9: create_experiment_rpc rejects cross-workspace notebook
--- ─────────────────────────────────────────────────
-SELECT throws_ok(
-  $$ DO $i$ DECLARE v_result jsonb; BEGIN
-    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
-    v_result := public.create_experiment_rpc(
-      'b0000000-0000-0000-0000-000000000001',
-      'c0000000-0000-0000-0000-000000000099',
-      'Should fail'
-    );
-  END; $i$ $$,
-  NULL, NULL, 'create_experiment_rpc rejects foreign-workspace notebook'
+-- ──────────────────────────────────────────────────────
+-- Test 12: Snapshot uses correct experiment_relations columns
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = '_build_experiment_snapshot'
+    AND p.prosrc LIKE '%source_experiment_id%'
+    AND p.prosrc LIKE '%target_experiment_id%'
+    AND p.prosrc LIKE '%relation_type%'
+    AND p.prosrc NOT LIKE '%relationship_type%'
+    AND p.prosrc NOT LIKE '%related_experiment_id%'
+  ),
+  'Snapshot uses correct experiment_relations column names'
 );
-RESET ROLE;
 
--- ─────────────────────────────────────────────────
--- Test 10: canonical snapshot is deterministic (same hash twice)
--- ─────────────────────────────────────────────────
-DO $$
-DECLARE v_hash1 text; v_hash2 text;
-BEGIN
-  v_hash1 := encode(sha256(convert_to(
-    (public._build_experiment_snapshot((current_setting('test.exp_id'))::uuid))::text, 'UTF8'
-  )), 'hex');
-  v_hash2 := encode(sha256(convert_to(
-    (public._build_experiment_snapshot((current_setting('test.exp_id'))::uuid))::text, 'UTF8'
-  )), 'hex');
-  PERFORM set_config('test.hash1', v_hash1, true);
-  PERFORM set_config('test.hash2', v_hash2, true);
-END;
-$$;
+-- ──────────────────────────────────────────────────────
+-- Test 13: Snapshot uses correct attachment columns
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = '_build_experiment_snapshot'
+    AND p.prosrc LIKE '%original_filename%'
+    AND p.prosrc NOT LIKE '%''filename''%'
+  ),
+  'Snapshot uses original_filename (not filename) for attachments'
+);
 
-SELECT is(
-  current_setting('test.hash1'),
-  current_setting('test.hash2'),
-  'canonical snapshot produces deterministic hash'
+-- ──────────────────────────────────────────────────────
+-- Test 14: Snapshot uses correct protocol_deviations columns
+-- ──────────────────────────────────────────────────────
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public' AND p.proname = '_build_experiment_snapshot'
+    AND p.prosrc LIKE '%original_value%'
+    AND p.prosrc LIKE '%actual_value%'
+    AND p.prosrc NOT LIKE '%description%'
+  ),
+  'Snapshot uses original_value/actual_value (not description) for deviations'
 );
 
 SELECT * FROM finish();

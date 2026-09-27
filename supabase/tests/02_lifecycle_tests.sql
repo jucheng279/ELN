@@ -1,74 +1,96 @@
--- =============================================================
--- 02_lifecycle_tests.sql — CHECK constraint tests
--- Self-contained: creates own workspace/notebook fixtures
--- =============================================================
+-- 02_lifecycle_tests.sql: CHECK constraint for status/is_locked/is_archived
 BEGIN;
-CREATE EXTENSION IF NOT EXISTS pgtap;
-
 SELECT plan(6);
 
--- Create minimal fixture data for valid FK references
+-- Setup: create the required parent rows for FK satisfaction
 DO $$
 DECLARE
-  v_owner uuid := 'a0000000-0000-0000-0000-000000000001';
-  v_ws    uuid := 'b0000000-0000-0000-0000-000000000001';
-  v_nb    uuid := 'c0000000-0000-0000-0000-000000000001';
+  v_user_id uuid := gen_random_uuid();
+  v_ws_id uuid;
+  v_nb_id uuid;
 BEGIN
-  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role)
-  VALUES (v_owner, 'owner@lc.test', crypt('pw', gen_salt('bf')), now(),
-    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated')
-  ON CONFLICT (id) DO NOTHING;
-
+  INSERT INTO auth.users (id, email, role, aud, instance_id)
+  VALUES (v_user_id, 'lifecycle@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
+  INSERT INTO public.profiles (id, email, display_name)
+  VALUES (v_user_id, 'lifecycle@test.com', 'Lifecycle Tester');
   INSERT INTO public.workspaces (id, name, created_by)
-  VALUES (v_ws, 'LC Workspace', v_owner)
-  ON CONFLICT (id) DO NOTHING;
-
+  VALUES (gen_random_uuid(), 'Lifecycle WS', v_user_id)
+  RETURNING id INTO v_ws_id;
   INSERT INTO public.notebooks (id, workspace_id, name, created_by)
-  VALUES (v_nb, v_ws, 'LC Notebook', v_owner)
-  ON CONFLICT (id) DO NOTHING;
+  VALUES (gen_random_uuid(), v_ws_id, 'Lifecycle NB', v_user_id)
+  RETURNING id INTO v_nb_id;
+
+  PERFORM set_config('test.user_id', v_user_id::text, true);
+  PERFORM set_config('test.workspace_id', v_ws_id::text, true);
+  PERFORM set_config('test.notebook_id', v_nb_id::text, true);
+END $$;
+
+-- Helper to attempt direct status mutation (bypasses RPC for constraint testing)
+CREATE OR REPLACE FUNCTION _test_set_experiment_status(p_status text, p_locked bool, p_archived bool)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_id uuid;
+BEGIN
+  SELECT e.id INTO v_id FROM public.experiments e LIMIT 1;
+  IF NOT FOUND THEN
+    INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by, experiment_id)
+    VALUES (
+      current_setting('test.workspace_id')::uuid,
+      current_setting('test.notebook_id')::uuid,
+      'lifecycle test',
+      p_status, p_locked, p_archived,
+      current_setting('test.user_id')::uuid,
+      'LC-001'
+    ) RETURNING experiments.id INTO v_id;
+  ELSE
+    UPDATE public.experiments SET status = p_status, is_locked = p_locked, is_archived = p_archived WHERE experiments.id = v_id;
+  END IF;
 END;
 $$;
 
--- 1. status=locked with is_locked=false -> rejected
+-- Invalid: locked status without is_locked flag
 SELECT throws_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','test','locked',false,false,'a0000000-0000-0000-0000-000000000001') $$,
-  '23514', NULL, 'locked requires is_locked=true'
+  $$ SELECT _test_set_experiment_status('locked', false, false) $$,
+  '23514',
+  NULL,
+  'locked status requires is_locked=true'
 );
 
--- 2. status=locked with is_archived=true -> rejected
+-- Invalid: archived status without is_archived flag
 SELECT throws_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','test','locked',true,true,'a0000000-0000-0000-0000-000000000001') $$,
-  '23514', NULL, 'locked cannot be archived'
+  $$ SELECT _test_set_experiment_status('archived', false, false) $$,
+  '23514',
+  NULL,
+  'archived status requires is_archived=true'
 );
 
--- 3. status=archived with is_archived=false -> rejected
+-- Invalid: draft with is_locked=true
 SELECT throws_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','test','archived',false,false,'a0000000-0000-0000-0000-000000000001') $$,
-  '23514', NULL, 'archived requires is_archived=true'
+  $$ SELECT _test_set_experiment_status('draft', true, false) $$,
+  '23514',
+  NULL,
+  'non-locked/archived status cannot have is_locked=true'
 );
 
--- 4. status=draft with is_locked=true -> rejected
+-- Invalid: in_progress with is_archived=true
 SELECT throws_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','test','draft',true,false,'a0000000-0000-0000-0000-000000000001') $$,
-  '23514', NULL, 'draft cannot be locked'
+  $$ SELECT _test_set_experiment_status('in_progress', false, true) $$,
+  '23514',
+  NULL,
+  'non-archived status cannot have is_archived=true'
 );
 
--- 5. status=in_progress with is_archived=true -> rejected
+-- Invalid: locked with is_archived=true
 SELECT throws_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','test','in_progress',false,true,'a0000000-0000-0000-0000-000000000001') $$,
-  '23514', NULL, 'in_progress cannot be archived'
+  $$ SELECT _test_set_experiment_status('locked', true, true) $$,
+  '23514',
+  NULL,
+  'locked status cannot have is_archived=true'
 );
 
--- 6. Valid draft passes
+-- Valid: locked with is_locked=true, is_archived=false
 SELECT lives_ok(
-  $$ INSERT INTO public.experiments (workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-     VALUES ('b0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001','Valid Draft','draft',false,false,'a0000000-0000-0000-0000-000000000001') $$,
-  'valid draft inserts ok'
+  $$ SELECT _test_set_experiment_status('locked', true, false) $$,
+  'locked status with is_locked=true accepted'
 );
 
 SELECT * FROM finish();

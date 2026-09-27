@@ -71,7 +71,9 @@ export default function BlockEditor({ experimentId, workspaceId, readOnly }: Blo
 
   useEffect(() => {
     initSession(experimentId);
-    return () => teardownSession();
+    return () => {
+      void teardownSession();
+    };
   }, [experimentId, initSession, teardownSession]);
   const blocks = useExperimentStore((s) => s.blocks);
   const addBlock = useExperimentStore((s) => s.addBlock);

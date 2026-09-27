@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useExperimentStore } from '@/stores/experimentStore';
+import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,16 +45,17 @@ import { exportExperimentPdf } from '@/lib/pdfExport';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
+type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
+
 interface ExperimentHeaderProps {
   experiment: Experiment;
   readOnly: boolean;
-  saveState?: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
+  saveState?: SaveState;
   lastSaved?: Date | null;
 }
 
 export default function ExperimentHeader({
   experiment,
-  readOnly,
   saveState = 'clean',
   lastSaved,
 }: ExperimentHeaderProps) {
@@ -68,6 +70,8 @@ export default function ExperimentHeader({
     duplicateExperiment,
     archiveExperiment,
   } = useExperimentStore();
+
+  const caps = useExperimentCapabilities(experiment);
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(experiment.title);
@@ -148,7 +152,7 @@ export default function ExperimentHeader({
           <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
 
-        {editingTitle && !readOnly ? (
+        {editingTitle && caps.canEditMetadata ? (
           <input
             ref={titleInputRef}
             type="text"
@@ -164,9 +168,9 @@ export default function ExperimentHeader({
           <h1
             className={cn(
               'truncate text-xl font-semibold text-foreground',
-              !readOnly && 'cursor-text rounded-md px-2 py-0.5 -mx-2 hover:bg-muted'
+              caps.canEditMetadata && 'cursor-text rounded-md px-2 py-0.5 -mx-2 hover:bg-muted'
             )}
-            onClick={() => !readOnly && setEditingTitle(true)}
+            onClick={() => caps.canEditMetadata && setEditingTitle(true)}
           >
             {experiment.title}
           </h1>
@@ -190,18 +194,18 @@ export default function ExperimentHeader({
 
         <div className="flex-1" />
 
-        {/* Lifecycle action button */}
-        {experiment.status === 'draft' && !readOnly && (
+        {/* Lifecycle actions driven by capabilities */}
+        {caps.canStart && (
           <Button size="xs" disabled={actionLoading} onClick={() => runAction(() => startExperiment(experiment.id), 'Experiment started')}>
             <Play className="h-3.5 w-3.5" /> Start
           </Button>
         )}
-        {experiment.status === 'in_progress' && !readOnly && (
+        {caps.canComplete && (
           <Button size="xs" disabled={actionLoading} onClick={() => runAction(() => completeExperiment(experiment.id), 'Experiment completed')}>
             <CheckCircle className="h-3.5 w-3.5" /> Complete
           </Button>
         )}
-        {(experiment.status === 'completed' || experiment.status === 'changes_requested') && !readOnly && (
+        {caps.canReopen && (
           <Button variant="outline" size="xs" disabled={actionLoading} onClick={() => runAction(() => reopenExperiment(experiment.id), 'Experiment reopened')}>
             <RotateCcw className="h-3.5 w-3.5" /> Reopen
           </Button>
@@ -227,19 +231,25 @@ export default function ExperimentHeader({
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => duplicateExperiment(experiment.id)}>
-              <Copy className="h-4 w-4" /> Duplicate
-            </DropdownMenuItem>
+            {caps.canDuplicate && (
+              <DropdownMenuItem onClick={() => duplicateExperiment(experiment.id)}>
+                <Copy className="h-4 w-4" /> Duplicate
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={async () => {
               const { blocks } = useExperimentStore.getState();
               await exportExperimentPdf(experiment, blocks);
             }}>
               <FileDown className="h-4 w-4" /> Export PDF
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => archiveExperiment(experiment.id)}>
-              <Archive className="h-4 w-4" /> Archive
-            </DropdownMenuItem>
+            {caps.canArchive && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={() => archiveExperiment(experiment.id)}>
+                  <Archive className="h-4 w-4" /> Archive
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -254,7 +264,7 @@ export default function ExperimentHeader({
         )}
         <span className="flex items-center gap-1">
           <Calendar className="h-3.5 w-3.5" />
-          {readOnly ? (
+          {!caps.canEditMetadata ? (
             <span>{formattedDate || 'No date'}</span>
           ) : (
             <input
@@ -272,7 +282,7 @@ export default function ExperimentHeader({
           {experiment.tags?.map((tag) => (
             <Badge key={tag.id} variant="secondary" className="gap-1 text-xs font-normal">
               {tag.name}
-              {!readOnly && (
+              {caps.canEditMetadata && (
                 <button onClick={() => removeTag(experiment.id, tag.id)} className="rounded-full p-0.5 hover:bg-foreground/10">
                   <X className="h-3 w-3" />
                 </button>
@@ -280,7 +290,7 @@ export default function ExperimentHeader({
             </Badge>
           ))}
 
-          {!readOnly && (
+          {caps.canEditMetadata && (
             <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
               <PopoverTrigger render={<Button variant="ghost" size="xs" className="gap-0.5 text-muted-foreground" />}>
                 <Plus className="h-3 w-3" /> Add tag

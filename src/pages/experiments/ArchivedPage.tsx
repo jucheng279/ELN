@@ -1,50 +1,43 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Archive } from 'lucide-react';
-import { useExperimentStore } from '@/stores/experimentStore';
+import { supabase } from '@/lib/supabase';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { useExperimentStore } from '@/stores/experimentStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
 import EmptyState from '@/components/common/EmptyState';
-import type { Experiment, ExperimentFilters } from '@/lib/types';
+import type { Experiment } from '@/lib/types';
 
 export default function ArchivedPage() {
   const navigate = useNavigate();
   const { currentWorkspace } = useWorkspaceStore();
-  const { experiments, loading, filters, fetchExperiments, restoreExperiment, toggleFavorite, setFilters } =
-    useExperimentStore();
-
-  const wsId = currentWorkspace?.id;
-  const sortBy = filters.sort_by ?? 'updated_at';
-  const sortOrder = filters.sort_order ?? 'desc';
+  const { restoreExperiment } = useExperimentStore();
+  const [archived, setArchived] = useState<Experiment[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!wsId) return;
-    fetchExperiments(wsId, filters);
-  }, [wsId, filters, fetchExperiments]);
+    if (!currentWorkspace) return;
+    setLoading(true);
+    supabase
+      .from('experiments')
+      .select(
+        '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
+      )
+      .eq('workspace_id', currentWorkspace.id)
+      .eq('is_archived', true)
+      .order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error && data) setArchived(data as Experiment[]);
+        setLoading(false);
+      });
+  }, [currentWorkspace]);
 
-  // Show only archived experiments
-  const archived = experiments.filter((e) => e.is_archived);
-
-  function handleSort(field: NonNullable<ExperimentFilters['sort_by']>) {
-    if (sortBy === field) {
-      setFilters({ sort_order: sortOrder === 'asc' ? 'desc' : 'asc' });
-    } else {
-      setFilters({ sort_by: field, sort_order: 'desc' });
-    }
-  }
-
-  function handleRowClick(exp: Experiment) {
-    navigate(`/app/experiments/${exp.id}`);
-  }
-
-  function handleRowAction(action: string, exp: Experiment) {
-    switch (action) {
-      case 'view':
-        navigate(`/app/experiments/${exp.id}`);
-        break;
-      case 'restore':
-        restoreExperiment(exp.id);
-        break;
+  async function handleRestore(exp: Experiment) {
+    try {
+      await restoreExperiment(exp.id);
+      setArchived((prev) => prev.filter((e) => e.id !== exp.id));
+    } catch (err: any) {
+      alert(err.message ?? 'Failed to restore');
     }
   }
 
@@ -58,8 +51,8 @@ export default function ArchivedPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
-        {loading && archived.length === 0 ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading…</div>
+        {loading ? (
+          <div className="py-16 text-center text-sm text-gray-400">Loading...</div>
         ) : archived.length === 0 ? (
           <EmptyState
             icon={Archive}
@@ -69,12 +62,11 @@ export default function ArchivedPage() {
         ) : (
           <ExperimentTable
             experiments={archived}
-            sortBy={sortBy}
-            sortOrder={sortOrder}
-            onSort={handleSort}
-            onRowClick={handleRowClick}
-            onRowAction={handleRowAction}
-            onToggleFavorite={(id) => toggleFavorite(id)}
+            onRowClick={(exp) => navigate(`/app/experiments/${exp.id}`)}
+            onRowAction={(action, exp) => {
+              if (action === 'restore') handleRestore(exp);
+              else if (action === 'view') navigate(`/app/experiments/${exp.id}`);
+            }}
             showArchive
           />
         )}

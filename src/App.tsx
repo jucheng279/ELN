@@ -5,13 +5,18 @@ import { useAuthStore } from '@/stores/authStore';
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'));
 const SignUpPage = lazy(() => import('@/pages/auth/SignUpPage'));
 const ForgotPasswordPage = lazy(() => import('@/pages/auth/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('@/pages/auth/ResetPasswordPage'));
+const InvitationAcceptPage = lazy(() => import('@/pages/auth/InvitationAcceptPage'));
 const WorkspaceSelectPage = lazy(() => import('@/pages/workspace/WorkspaceSelectPage'));
 const AppLayout = lazy(() => import('@/components/layout/AppLayout'));
 const ExperimentListPage = lazy(() => import('@/pages/experiments/ExperimentListPage'));
 const ExperimentPage = lazy(() => import('@/pages/experiments/ExperimentPage'));
+const MyExperimentsPage = lazy(() => import('@/pages/experiments/MyExperimentsPage'));
 const FavoritesPage = lazy(() => import('@/pages/experiments/FavoritesPage'));
 const RecentPage = lazy(() => import('@/pages/experiments/RecentPage'));
 const ArchivedPage = lazy(() => import('@/pages/experiments/ArchivedPage'));
+const NotebookPage = lazy(() => import('@/pages/notebooks/NotebookPage'));
+const CreateNotebookPage = lazy(() => import('@/pages/notebooks/CreateNotebookPage'));
 const TemplatesPage = lazy(() => import('@/pages/templates/TemplatesPage'));
 const TemplateEditorPage = lazy(() => import('@/pages/templates/TemplateEditorPage'));
 const ProtocolsPage = lazy(() => import('@/pages/protocols/ProtocolsPage'));
@@ -58,6 +63,8 @@ export default function App() {
           <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />
           <Route path="/signup" element={<GuestGuard><SignUpPage /></GuestGuard>} />
           <Route path="/forgot-password" element={<GuestGuard><ForgotPasswordPage /></GuestGuard>} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/invite" element={<InvitationAcceptPage />} />
 
           <Route path="/workspaces" element={<AuthGuard><WorkspaceSelectPage /></AuthGuard>} />
 
@@ -65,10 +72,12 @@ export default function App() {
             <Route index element={<ExperimentListPage />} />
             <Route path="experiments" element={<ExperimentListPage />} />
             <Route path="experiments/:id" element={<ExperimentPage />} />
-            <Route path="my-experiments" element={<ExperimentListPage />} />
+            <Route path="my-experiments" element={<MyExperimentsPage />} />
             <Route path="favorites" element={<FavoritesPage />} />
             <Route path="recent" element={<RecentPage />} />
             <Route path="archived" element={<ArchivedPage />} />
+            <Route path="notebooks/new" element={<CreateNotebookPage />} />
+            <Route path="notebooks/:id" element={<NotebookPage />} />
             <Route path="templates" element={<TemplatesPage />} />
             <Route path="templates/:id" element={<TemplateEditorPage />} />
             <Route path="protocols" element={<ProtocolsPage />} />

@@ -44,17 +44,12 @@ export const useNotebookStore = create<NotebookState & NotebookActions>((set, ge
   },
 
   createNotebook: async (workspaceId, name, description) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
     const { data, error } = await supabase
       .from('notebooks')
       .insert({
         workspace_id: workspaceId,
         name,
         description: description ?? null,
-        created_by: userId,
       })
       .select()
       .single();
@@ -69,7 +64,7 @@ export const useNotebookStore = create<NotebookState & NotebookActions>((set, ge
   updateNotebook: async (id, updates) => {
     const { data, error } = await supabase
       .from('notebooks')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', id)
       .select()
       .single();
@@ -87,7 +82,7 @@ export const useNotebookStore = create<NotebookState & NotebookActions>((set, ge
   archiveNotebook: async (id) => {
     const { error } = await supabase
       .from('notebooks')
-      .update({ is_archived: true, updated_at: new Date().toISOString() })
+      .update({ is_archived: true })
       .eq('id', id);
 
     if (error) throw error;
@@ -115,25 +110,12 @@ export const useNotebookStore = create<NotebookState & NotebookActions>((set, ge
   },
 
   createFolder: async (notebookId, name, parentId) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
-    // Generate an order key based on the current folder count
-    const { folders } = get();
-    const siblings = folders.filter(
-      (f) => f.notebook_id === notebookId && f.parent_id === (parentId ?? null)
-    );
-    const orderKey = `a${siblings.length}`;
-
     const { data, error } = await supabase
       .from('folders')
       .insert({
         notebook_id: notebookId,
         parent_id: parentId ?? null,
         name,
-        order_key: orderKey,
-        created_by: userId,
       })
       .select()
       .single();

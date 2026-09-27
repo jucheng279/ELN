@@ -430,7 +430,7 @@ export default function SearchPage() {
                 {results.map((exp) => (
                   <button
                     key={exp.id}
-                    onClick={() => navigate(`/experiments/${exp.id}`)}
+                    onClick={() => navigate(`/app/experiments/${exp.id}`)}
                     className="block w-full px-3 py-3 text-left transition-colors hover:bg-gray-50"
                   >
                     <div className="flex items-start justify-between gap-3">

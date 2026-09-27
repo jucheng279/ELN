@@ -129,20 +129,10 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>((set,
     const { currentWorkspace } = get();
     if (!currentWorkspace) throw new Error('No workspace selected');
 
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
-    // Generate a random invitation token
-    const token = crypto.randomUUID();
-
     const { error } = await supabase.from('workspace_invitations').insert({
       workspace_id: currentWorkspace.id,
       email,
-      role,
-      invited_by: userId,
-      token,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+      role: role === 'owner' ? 'admin' : role,
     });
 
     if (error) throw error;

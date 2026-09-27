@@ -13,7 +13,6 @@ import {
   FlaskConical,
   Archive,
   Settings,
-  Bell,
   LogOut,
   Menu,
   X,
@@ -22,6 +21,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useNotebookStore } from '@/stores/notebookStore';
 import DropdownMenu from '@/components/common/DropdownMenu';
+import NotificationCenter from '@/components/notifications/NotificationCenter';
 
 const navItems = [
   { to: '/app', label: 'All Experiments', icon: FlaskRound, end: true },
@@ -52,7 +52,6 @@ export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
 
-  // Bootstrap: fetch workspaces, select first, fetch notebooks
   useEffect(() => {
     if (workspaces.length === 0) {
       fetchWorkspaces();
@@ -71,7 +70,6 @@ export default function AppLayout() {
     }
   }, [currentWorkspace, fetchNotebooks]);
 
-  // Redirect to workspace picker when none exist after fetching
   useEffect(() => {
     if (workspaces.length === 0 && !currentWorkspace) {
       const timer = setTimeout(() => {
@@ -99,7 +97,6 @@ export default function AppLayout() {
     setWsDropdownOpen(false);
   }
 
-  // Breadcrumb segments
   const pathParts = location.pathname.replace('/app', '').split('/').filter(Boolean);
 
   const displayName = profile?.display_name || user?.email || 'User';
@@ -112,7 +109,6 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/30 lg:hidden"
@@ -176,7 +172,6 @@ export default function AppLayout() {
             </div>
           )}
 
-          {/* Mobile close */}
           <button
             className="absolute right-3 top-3 lg:hidden rounded p-1 text-gray-400 hover:bg-gray-100"
             onClick={() => setSidebarOpen(false)}
@@ -187,7 +182,6 @@ export default function AppLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-3">
-          {/* Primary nav */}
           <div className="space-y-0.5">
             {navItems.map((item) => (
               <NavLink
@@ -272,7 +266,7 @@ export default function AppLayout() {
           </div>
         </nav>
 
-        {/* Sidebar footer – settings + user */}
+        {/* Sidebar footer */}
         <div className="border-t border-gray-200 p-3 space-y-1">
           <NavLink
             to="/app/settings"
@@ -313,7 +307,6 @@ export default function AppLayout() {
         {/* Top bar */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
           <div className="flex items-center gap-3">
-            {/* Mobile hamburger */}
             <button
               className="rounded p-1 text-gray-500 hover:bg-gray-100 lg:hidden"
               onClick={() => setSidebarOpen(true)}
@@ -321,7 +314,6 @@ export default function AppLayout() {
               <Menu size={20} />
             </button>
 
-            {/* Breadcrumb */}
             <nav className="flex items-center gap-1 text-sm text-gray-500">
               <span className="font-medium text-gray-700">
                 {currentWorkspace?.name ?? 'Workspace'}
@@ -338,12 +330,14 @@ export default function AppLayout() {
           </div>
 
           <div className="flex items-center gap-1">
-            <button className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
+            <button
+              onClick={() => navigate('/app/search')}
+              className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              aria-label="Search"
+            >
               <Search size={17} />
             </button>
-            <button className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
-              <Bell size={17} />
-            </button>
+            <NotificationCenter />
             <DropdownMenu
               trigger={
                 <button className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-gray-200 text-[11px] font-semibold text-gray-600 hover:bg-gray-300 transition-colors">
@@ -358,7 +352,6 @@ export default function AppLayout() {
           </div>
         </header>
 
-        {/* Content */}
         <main className="flex-1 overflow-y-auto bg-white">
           <Outlet />
         </main>

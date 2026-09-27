@@ -66,9 +66,6 @@ async function flushPendingBlocks() {
         type: b.type,
         content: b.content,
         order_key: b.order_key,
-        created_by: b.created_by,
-        updated_by: b.updated_by,
-        updated_at: new Date().toISOString(),
       })),
       { onConflict: 'id' }
     );
@@ -217,9 +214,12 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         query = query.lte('experiment_date', active.date_to);
       }
       if (active.search) {
-        query = query.or(
-          `title.ilike.%${active.search}%,experiment_id.ilike.%${active.search}%`
-        );
+        const sanitized = active.search.replace(/[%_,()]/g, '');
+        if (sanitized) {
+          query = query.or(
+            `title.ilike.%${sanitized}%,experiment_id.ilike.%${sanitized}%`
+          );
+        }
       }
 
       const sortBy = active.sort_by ?? 'updated_at';
@@ -275,7 +275,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       notebook_id: notebookId,
       title: title ?? 'Untitled Experiment',
       status: 'draft' as ExperimentStatus,
-      created_by: userId,
       experiment_date: new Date().toISOString().split('T')[0],
     };
 
@@ -308,7 +307,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
             type: block.type,
             content: block.content,
             order_key: orderKeyAt(i),
-            created_by: userId,
           })
         );
 
@@ -375,7 +373,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   updateExperiment: async (id, updates) => {
     const { data, error } = await supabase
       .from('experiments')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', id)
       .select()
       .single();
@@ -393,13 +391,12 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   updateExperimentStatus: async (id, status) => {
-    const isLocked = status === 'locked' || status === 'approved';
+    const isLocked = status === 'locked';
     const { data, error } = await supabase
       .from('experiments')
       .update({
         status,
         is_locked: isLocked,
-        updated_at: new Date().toISOString(),
       })
       .eq('id', id)
       .select()
@@ -443,7 +440,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         folder_id: src.folder_id,
         title: `${src.title} (Copy)`,
         status: 'draft' as ExperimentStatus,
-        created_by: userId,
         experiment_date: new Date().toISOString().split('T')[0],
         template_id: src.template_id,
         template_version_id: src.template_version_id,
@@ -468,7 +464,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
           type: b.type,
           content: b.content,
           order_key: b.order_key,
-          created_by: userId,
         }));
         await supabase.from('experiment_blocks').insert(newBlocks);
       }
@@ -502,7 +497,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   archiveExperiment: async (id) => {
     const { error } = await supabase
       .from('experiments')
-      .update({ is_archived: true, updated_at: new Date().toISOString() })
+      .update({ is_archived: true, status: 'archived' as ExperimentStatus })
       .eq('id', id);
 
     if (error) throw error;
@@ -517,7 +512,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   restoreExperiment: async (id) => {
     const { data, error } = await supabase
       .from('experiments')
-      .update({ is_archived: false, updated_at: new Date().toISOString() })
+      .update({ is_archived: false, status: 'draft' as ExperimentStatus })
       .eq('id', id)
       .select()
       .single();
@@ -572,7 +567,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         type,
         content,
         order_key: newOrderKey,
-        created_by: userId,
       })
       .select()
       .single();
@@ -635,7 +629,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
     const { error } = await supabase
       .from('experiment_blocks')
-      .update({ order_key: newOrderKey, updated_at: new Date().toISOString() })
+      .update({ order_key: newOrderKey })
       .eq('id', blockId);
 
     if (error) {

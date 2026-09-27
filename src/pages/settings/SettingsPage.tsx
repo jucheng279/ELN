@@ -128,7 +128,6 @@ export default function SettingsPage() {
         .update({
           name: workspaceName,
           description: workspaceDescription || null,
-          updated_at: new Date().toISOString(),
         })
         .eq('id', currentWorkspace.id);
     } catch (err) {
@@ -378,6 +377,23 @@ export default function SettingsPage() {
                           Expires{' '}
                           {new Date(inv.expires_at).toLocaleDateString()}
                         </p>
+                        <div className="mt-1 flex items-center gap-1">
+                          <input
+                            readOnly
+                            value={`${window.location.origin}/invite?token=${inv.token}`}
+                            className="w-64 rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500 focus:outline-none"
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${window.location.origin}/invite?token=${inv.token}`);
+                            }}
+                            className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+                          >
+                            Copy
+                          </button>
+                        </div>
                       </div>
                       <button
                         onClick={() => handleRevokeInvitation(inv.id)}
@@ -462,31 +478,16 @@ export default function SettingsPage() {
                 Change password
               </h2>
               <p className="mt-1 text-sm text-gray-500">
-                Password management is not available in this version.
+                Use the password reset flow to change your password.
               </p>
-              <div className="mt-3 space-y-3 opacity-50 pointer-events-none">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Current password
-                  </label>
-                  <input
-                    type="password"
-                    disabled
-                    className="w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    New password
-                  </label>
-                  <input
-                    type="password"
-                    disabled
-                    className="w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
-                  />
-                </div>
-                <Button variant="secondary" size="sm" disabled icon={<Lock size={14} />}>
-                  Update password
+              <div className="mt-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Lock size={14} />}
+                  onClick={() => window.location.href = '/forgot-password'}
+                >
+                  Reset password
                 </Button>
               </div>
             </section>

@@ -42,7 +42,7 @@ export default function FavoritesPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'edit':
-        navigate(`/app/experiments/${exp.id}/edit`);
+        navigate(`/app/experiments/${exp.id}`);
         break;
       case 'archive':
         archiveExperiment(exp.id);

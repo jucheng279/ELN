@@ -127,7 +127,7 @@ export default function ExperimentListPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'edit':
-        navigate(`/app/experiments/${exp.id}/edit`);
+        navigate(`/app/experiments/${exp.id}`);
         break;
       case 'duplicate':
         duplicateExperiment(exp.id);

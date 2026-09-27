@@ -15,25 +15,21 @@ import RelatedExperimentBlock from '@/components/editor/blocks/RelatedExperiment
 import AttachmentBlock from '@/components/editor/blocks/AttachmentBlock';
 import ResultBlock from '@/components/editor/blocks/ResultBlock';
 
-// ──────────────────────────────────────────────
-// Props
-// ──────────────────────────────────────────────
-
 interface BlockRendererProps {
   block: ExperimentBlock;
   onUpdate: (content: any) => void;
   readOnly: boolean;
+  workspaceId?: string;
+  experimentId?: string;
   onSlashCommand?: (rect: { top: number; left: number }) => void;
 }
-
-// ──────────────────────────────────────────────
-// Component
-// ──────────────────────────────────────────────
 
 export default function BlockRenderer({
   block,
   onUpdate,
   readOnly,
+  workspaceId,
+  experimentId,
   onSlashCommand,
 }: BlockRendererProps) {
   const { type, content } = block;
@@ -50,61 +46,25 @@ export default function BlockRenderer({
       );
 
     case 'heading':
-      return (
-        <HeadingBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <HeadingBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'list':
-      return (
-        <ListBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <ListBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'checklist':
-      return (
-        <ChecklistBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <ChecklistBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'callout':
-      return (
-        <CalloutBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <CalloutBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'divider':
       return <DividerBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'parameters':
-      return (
-        <ParameterBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <ParameterBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'table':
-      return (
-        <TableBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <TableBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'image':
       return (
@@ -112,17 +72,13 @@ export default function BlockRenderer({
           content={content}
           onUpdate={onUpdate}
           readOnly={readOnly}
+          workspaceId={workspaceId}
+          experimentId={experimentId}
         />
       );
 
     case 'code':
-      return (
-        <CodeBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <CodeBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'protocol':
       return (
@@ -130,26 +86,15 @@ export default function BlockRenderer({
           content={content}
           onUpdate={onUpdate}
           readOnly={readOnly}
+          workspaceId={workspaceId}
         />
       );
 
     case 'reference':
-      return (
-        <ReferenceBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <ReferenceBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'related_experiment':
-      return (
-        <RelatedExperimentBlock
-          content={content}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <RelatedExperimentBlock content={content} onUpdate={onUpdate} readOnly={readOnly} />;
 
     case 'attachment':
       return (
@@ -157,17 +102,13 @@ export default function BlockRenderer({
           block={{ content }}
           onUpdate={onUpdate}
           readOnly={readOnly}
+          workspaceId={workspaceId}
+          experimentId={experimentId}
         />
       );
 
     case 'result':
-      return (
-        <ResultBlock
-          block={{ content }}
-          onUpdate={onUpdate}
-          readOnly={readOnly}
-        />
-      );
+      return <ResultBlock block={{ content }} onUpdate={onUpdate} readOnly={readOnly} />;
 
     default:
       return (

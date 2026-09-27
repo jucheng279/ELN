@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, DragEvent, ChangeEvent } from 'react';
-import { Upload, X, Image as ImageIcon } from 'lucide-react';
+import { Upload, X, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { uploadFile, getSignedUrl, deleteFile } from '@/lib/storage';
 
 interface ImageContent {
   url: string;
@@ -7,12 +8,15 @@ interface ImageContent {
   alt: string;
   filename: string;
   fileSize: number;
+  storagePath?: string;
 }
 
 interface ImageBlockProps {
   content: ImageContent;
   onUpdate: (content: ImageContent) => void;
   readOnly: boolean;
+  workspaceId?: string;
+  experimentId?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -22,29 +26,43 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockProps) {
-  const { url, caption, alt, filename, fileSize } = content;
+export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, experimentId }: ImageBlockProps) {
+  const { url, caption, alt, filename, fileSize, storagePath } = content;
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(
-    (file: File) => {
+    async (file: File) => {
       if (!file.type.startsWith('image/')) return;
+      if (!workspaceId || !experimentId) {
+        setError('Cannot upload: missing context');
+        return;
+      }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
+      setUploading(true);
+      setError(null);
+      try {
+        if (storagePath) {
+          await deleteFile(storagePath).catch(() => {});
+        }
+        const result = await uploadFile(workspaceId, experimentId, file);
         onUpdate({
           ...content,
-          url: dataUrl,
+          url: result.url,
+          storagePath: result.path,
           filename: file.name,
           fileSize: file.size,
         });
-      };
-      reader.readAsDataURL(file);
+      } catch (err: any) {
+        setError(err.message || 'Upload failed');
+      } finally {
+        setUploading(false);
+      }
     },
-    [content, onUpdate]
+    [content, onUpdate, workspaceId, experimentId, storagePath]
   );
 
   const handleDragOver = useCallback(
@@ -68,7 +86,6 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
       e.stopPropagation();
       setIsDragging(false);
       if (readOnly) return;
-
       const file = e.dataTransfer.files?.[0];
       if (file) processFile(file);
     },
@@ -79,21 +96,22 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
     (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) processFile(file);
-      // Reset input so the same file can be re-selected
       e.target.value = '';
     },
     [processFile]
   );
 
   const handleClick = useCallback(() => {
-    if (!readOnly) fileInputRef.current?.click();
-  }, [readOnly]);
+    if (!readOnly && !uploading) fileInputRef.current?.click();
+  }, [readOnly, uploading]);
 
-  const removeImage = useCallback(() => {
-    onUpdate({ ...content, url: '', filename: '', fileSize: 0 });
-  }, [content, onUpdate]);
+  const removeImage = useCallback(async () => {
+    if (storagePath) {
+      await deleteFile(storagePath).catch(() => {});
+    }
+    onUpdate({ ...content, url: '', filename: '', fileSize: 0, storagePath: undefined });
+  }, [content, onUpdate, storagePath]);
 
-  // --- No image: upload area ---
   if (!url) {
     if (readOnly) {
       return (
@@ -112,24 +130,34 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex items-center justify-center rounded-lg border-2 border-dashed p-8 cursor-pointer transition-colors ${
+        className={`flex items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+          uploading ? 'pointer-events-none' : 'cursor-pointer'
+        } ${
           isDragging
             ? 'border-blue-400 bg-blue-50'
             : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
         }`}
       >
         <div className="text-center">
-          <Upload
-            className={`w-10 h-10 mx-auto mb-3 ${
-              isDragging ? 'text-blue-500' : 'text-gray-400'
-            }`}
-          />
-          <p className="text-sm font-medium text-gray-600">
-            Drop an image here or click to upload
-          </p>
-          <p className="text-xs text-gray-400 mt-1">
-            Supports JPG, PNG, GIF, WebP, SVG
-          </p>
+          {uploading ? (
+            <>
+              <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-500 animate-spin" />
+              <p className="text-sm font-medium text-gray-600">Uploading image...</p>
+            </>
+          ) : (
+            <>
+              <Upload
+                className={`w-10 h-10 mx-auto mb-3 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`}
+              />
+              <p className="text-sm font-medium text-gray-600">
+                Drop an image here or click to upload
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Supports JPG, PNG, GIF, WebP, SVG
+              </p>
+            </>
+          )}
+          {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
         </div>
 
         <input
@@ -143,10 +171,8 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
     );
   }
 
-  // --- Image exists ---
   return (
     <div className="w-full">
-      {/* Image container */}
       <div
         className="relative rounded-lg overflow-hidden bg-gray-100"
         onMouseEnter={() => setIsHovering(true)}
@@ -158,7 +184,6 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
           className="w-full max-h-[500px] object-contain"
         />
 
-        {/* Hover overlay */}
         {!readOnly && isHovering && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center gap-3 transition-opacity">
             <button
@@ -192,18 +217,14 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
         />
       </div>
 
-      {/* File info */}
       {filename && (
         <div className="mt-1.5 text-xs text-gray-400">
           {filename} · {formatFileSize(fileSize)}
         </div>
       )}
 
-      {/* Caption */}
       {readOnly ? (
-        caption && (
-          <p className="mt-2 text-sm text-gray-500 italic">{caption}</p>
-        )
+        caption && <p className="mt-2 text-sm text-gray-500 italic">{caption}</p>
       ) : (
         <input
           value={caption}
@@ -213,11 +234,8 @@ export default function ImageBlock({ content, onUpdate, readOnly }: ImageBlockPr
         />
       )}
 
-      {/* Alt text */}
       {readOnly ? (
-        alt && (
-          <p className="mt-1 text-xs text-gray-400">Alt: {alt}</p>
-        )
+        alt && <p className="mt-1 text-xs text-gray-400">Alt: {alt}</p>
       ) : (
         <input
           value={alt}

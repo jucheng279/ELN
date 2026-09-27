@@ -1,11 +1,13 @@
 import { useState, useRef } from 'react';
-import { Upload, File, Download, X, RefreshCw } from 'lucide-react';
+import { Upload, File, Download, X, RefreshCw, Loader2 } from 'lucide-react';
+import { uploadFile, getSignedUrl, deleteFile } from '@/lib/storage';
 
 interface AttachmentContent {
   filename: string;
   displayName: string;
   mimeType: string;
   fileSize: number;
+  storagePath: string;
   url: string;
   caption: string;
 }
@@ -15,6 +17,7 @@ const DEFAULT_CONTENT: AttachmentContent = {
   displayName: '',
   mimeType: '',
   fileSize: 0,
+  storagePath: '',
   url: '',
   caption: '',
 };
@@ -40,28 +43,70 @@ export default function AttachmentBlock({
   block,
   onUpdate,
   readOnly,
+  workspaceId,
+  experimentId,
 }: {
   block: { content: any };
   onUpdate: (content: any) => void;
   readOnly: boolean;
+  workspaceId?: string;
+  experimentId?: string;
 }) {
   const data: AttachmentContent = { ...DEFAULT_CONTENT, ...block.content };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleFile(file: globalThis.File) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
+  async function handleFile(file: globalThis.File) {
+    if (!workspaceId || !experimentId) {
+      setError('Cannot upload: missing context');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    try {
+      // Delete old file if replacing
+      if (data.storagePath) {
+        await deleteFile(data.storagePath).catch(() => {});
+      }
+
+      const { path, url } = await uploadFile(workspaceId, experimentId, file);
       onUpdate({
         ...data,
         filename: file.name,
         displayName: file.name,
         mimeType: file.type || 'application/octet-stream',
         fileSize: file.size,
-        url: e.target?.result as string,
+        storagePath: path,
+        url,
       });
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      setError(err.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (data.storagePath) {
+      try {
+        const url = await getSignedUrl(data.storagePath);
+        window.open(url, '_blank');
+      } catch {
+        if (data.url) window.open(data.url, '_blank');
+      }
+    } else if (data.url) {
+      window.open(data.url, '_blank');
+    }
+  }
+
+  async function handleRemove() {
+    if (data.storagePath) {
+      await deleteFile(data.storagePath).catch(() => {});
+    }
+    onUpdate(DEFAULT_CONTENT);
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -71,22 +116,32 @@ export default function AttachmentBlock({
     if (file) handleFile(file);
   }
 
-  if (!data.url) {
+  if (!data.url && !data.storagePath) {
     return (
       <div
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
-        onClick={() => !readOnly && fileInputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors cursor-pointer ${
+        onClick={() => !readOnly && !uploading && fileInputRef.current?.click()}
+        className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors ${
+          uploading ? 'pointer-events-none' : 'cursor-pointer'
+        } ${
           isDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:border-gray-400'
         } ${readOnly ? 'pointer-events-none opacity-60' : ''}`}
       >
-        <Upload className="h-8 w-8 text-gray-400" />
-        <p className="text-sm text-gray-500">
-          Drop a file here or click to upload
-        </p>
-        <p className="text-xs text-gray-400">Any file type accepted</p>
+        {uploading ? (
+          <>
+            <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+            <p className="text-sm text-gray-500">Uploading...</p>
+          </>
+        ) : (
+          <>
+            <Upload className="h-8 w-8 text-gray-400" />
+            <p className="text-sm text-gray-500">Drop a file here or click to upload</p>
+            <p className="text-xs text-gray-400">Any file type accepted</p>
+          </>
+        )}
+        {error && <p className="text-xs text-red-500">{error}</p>}
         <input
           ref={fileInputRef}
           type="file"
@@ -115,25 +170,25 @@ export default function AttachmentBlock({
           </p>
         </div>
         <div className="flex items-center gap-1">
-          <a
-            href={data.url}
-            download={data.filename}
+          <button
+            onClick={handleDownload}
             className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             title="Download"
           >
             <Download className="h-4 w-4" />
-          </a>
+          </button>
           {!readOnly && (
             <>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                 title="Replace file"
+                disabled={uploading}
               >
-                <RefreshCw className="h-4 w-4" />
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               </button>
               <button
-                onClick={() => onUpdate(DEFAULT_CONTENT)}
+                onClick={handleRemove}
                 className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-red-500"
                 title="Remove"
               >
@@ -152,6 +207,11 @@ export default function AttachmentBlock({
           }}
         />
       </div>
+      {error && (
+        <div className="border-t border-red-100 px-3 py-1.5">
+          <p className="text-xs text-red-500">{error}</p>
+        </div>
+      )}
       {!readOnly ? (
         <div className="border-t border-gray-100 px-3 py-2">
           <input

@@ -157,6 +157,7 @@ export default function ExperimentPage() {
           <div className="mx-auto max-w-3xl px-8 py-6">
             <BlockEditor
               experimentId={currentExperiment.id}
+              workspaceId={currentExperiment.workspace_id}
               readOnly={readOnly}
             />
           </div>

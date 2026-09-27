@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { generateKeyBetween } from 'fractional-indexing';
 import { supabase } from '@/lib/supabase';
 import type {
   Experiment,
@@ -10,36 +11,12 @@ import type {
 } from '@/lib/types';
 
 // ──────────────────────────────────────────────
-// Order-key helpers
-// ──────────────────────────────────────────────
-
-/**
- * Generate an order key for the i-th position: "a0", "a1", …
- */
-function orderKeyAt(index: number): string {
-  return `a${index}`;
-}
-
-/**
- * Generate an order key between two existing keys.
- * Uses simple lexicographic midpoint by appending a character.
- */
-function orderKeyBetween(before: string | null, after: string | null): string {
-  if (!before && !after) return 'a0';
-  if (!before) return (after ?? 'a0').slice(0, -1) + '0';
-  if (!after) return before + '1';
-
-  // Simple approach: concatenate before + midpoint character
-  // This keeps lexicographic ordering: before < before+'8' < after
-  return before + '8';
-}
-
-// ──────────────────────────────────────────────
 // Debounced autosave helpers
 // ──────────────────────────────────────────────
 
 const pendingBlockChanges = new Map<string, ExperimentBlock>();
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let activeExperimentId: string | null = null;
 const AUTOSAVE_DELAY_MS = 2000;
 
 function scheduleSave() {
@@ -76,16 +53,37 @@ async function flushPendingBlocks() {
     state._setLastSaved(new Date());
   } catch (error) {
     console.error('Autosave failed:', error);
-    // Re-queue the blocks for retry
     for (const b of blocksToSave) {
       if (!pendingBlockChanges.has(b.id)) {
         pendingBlockChanges.set(b.id, b);
       }
     }
     state._setSaving(false);
-    // Retry after a delay
     scheduleSave();
   }
+}
+
+// beforeunload handler — flush on navigate/close
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  if (pendingBlockChanges.size > 0) {
+    e.preventDefault();
+    flushPendingBlocks();
+  }
+}
+
+function startAutosaveSession(experimentId: string) {
+  if (activeExperimentId === experimentId) return;
+  stopAutosaveSession();
+  activeExperimentId = experimentId;
+  window.addEventListener('beforeunload', handleBeforeUnload);
+}
+
+function stopAutosaveSession() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  flushPendingBlocks();
+  activeExperimentId = null;
+  window.removeEventListener('beforeunload', handleBeforeUnload);
 }
 
 // ──────────────────────────────────────────────
@@ -103,11 +101,9 @@ interface ExperimentState {
 }
 
 interface ExperimentActions {
-  // Internal helpers for autosave
   _setSaving: (saving: boolean) => void;
   _setLastSaved: (date: Date) => void;
 
-  // Experiments
   fetchExperiments: (workspaceId: string, filters?: ExperimentFilters) => Promise<void>;
   createExperiment: (
     workspaceId: string,
@@ -120,13 +116,22 @@ interface ExperimentActions {
     id: string,
     updates: Partial<Pick<Experiment, 'title' | 'notebook_id' | 'folder_id' | 'experiment_date'>>
   ) => Promise<void>;
-  updateExperimentStatus: (id: string, status: ExperimentStatus) => Promise<void>;
   duplicateExperiment: (
     id: string,
     options?: { includeBlocks?: boolean; includeProtocols?: boolean }
   ) => Promise<Experiment>;
   archiveExperiment: (id: string) => Promise<void>;
   restoreExperiment: (id: string) => Promise<void>;
+
+  // Domain status actions (server-side RPCs)
+  startExperiment: (id: string) => Promise<void>;
+  completeExperiment: (id: string) => Promise<void>;
+  reopenExperiment: (id: string) => Promise<void>;
+  submitForReview: (id: string, reviewerId: string) => Promise<any>;
+  approveExperiment: (id: string, reviewId: string) => Promise<void>;
+  requestChanges: (id: string, reviewId: string, comment?: string) => Promise<void>;
+  signAndLock: (id: string) => Promise<any>;
+  createAmendment: (id: string, reason: string) => Promise<void>;
 
   // Blocks
   fetchBlocks: (experimentId: string) => Promise<void>;
@@ -146,16 +151,20 @@ interface ExperimentActions {
   addTag: (experimentId: string, tagName: string) => Promise<void>;
   removeTag: (experimentId: string, tagId: string) => Promise<void>;
 
-  // Revisions
+  // Revisions (server-side RPC)
   createRevision: (
     experimentId: string,
     changeSummary: string,
     changeType: string
-  ) => Promise<void>;
+  ) => Promise<any>;
 
   // Filters
   setFilters: (filters: Partial<ExperimentFilters>) => void;
   clearFilters: () => void;
+
+  // Session lifecycle
+  initSession: (experimentId: string) => void;
+  teardownSession: () => void;
 }
 
 const DEFAULT_FILTERS: ExperimentFilters = {
@@ -179,9 +188,15 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   lastSaved: null,
   filters: { ...DEFAULT_FILTERS },
 
-  // ── Internal helpers ──────────────────────────
   _setSaving: (saving) => set({ saving }),
   _setLastSaved: (date) => set({ lastSaved: date }),
+
+  // ── Session lifecycle ────────────────────────
+  initSession: (experimentId) => startAutosaveSession(experimentId),
+  teardownSession: () => {
+    stopAutosaveSession();
+    set({ currentExperiment: null, blocks: [] });
+  },
 
   // ── Experiments ───────────────────────────────
 
@@ -198,27 +213,15 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         .eq('workspace_id', workspaceId)
         .eq('is_archived', false);
 
-      if (active.status) {
-        query = query.eq('status', active.status);
-      }
-      if (active.notebook_id) {
-        query = query.eq('notebook_id', active.notebook_id);
-      }
-      if (active.created_by) {
-        query = query.eq('created_by', active.created_by);
-      }
-      if (active.date_from) {
-        query = query.gte('experiment_date', active.date_from);
-      }
-      if (active.date_to) {
-        query = query.lte('experiment_date', active.date_to);
-      }
+      if (active.status) query = query.eq('status', active.status);
+      if (active.notebook_id) query = query.eq('notebook_id', active.notebook_id);
+      if (active.created_by) query = query.eq('created_by', active.created_by);
+      if (active.date_from) query = query.gte('experiment_date', active.date_from);
+      if (active.date_to) query = query.lte('experiment_date', active.date_to);
       if (active.search) {
         const sanitized = active.search.replace(/[%_,()]/g, '');
         if (sanitized) {
-          query = query.or(
-            `title.ilike.%${sanitized}%,experiment_id.ilike.%${sanitized}%`
-          );
+          query = query.or(`title.ilike.%${sanitized}%,experiment_id.ilike.%${sanitized}%`);
         }
       }
 
@@ -231,18 +234,15 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
       let experiments = (data ?? []) as Experiment[];
 
-      // If tag filtering is requested, do it client-side via the join table
       if (active.tag_ids && active.tag_ids.length > 0) {
         const { data: taggedRows } = await supabase
           .from('experiment_tags')
           .select('experiment_id')
           .in('tag_id', active.tag_ids);
-
         const taggedIds = new Set((taggedRows ?? []).map((r) => r.experiment_id));
         experiments = experiments.filter((e) => taggedIds.has(e.id));
       }
 
-      // Fetch favorites for the current user to set is_favorited
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData.user?.id;
       if (userId) {
@@ -251,10 +251,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
           .select('experiment_id')
           .eq('user_id', userId);
         const favSet = new Set((favs ?? []).map((f) => f.experiment_id));
-        experiments = experiments.map((e) => ({
-          ...e,
-          is_favorited: favSet.has(e.id),
-        }));
+        experiments = experiments.map((e) => ({ ...e, is_favorited: favSet.has(e.id) }));
       }
 
       set({ experiments });
@@ -277,22 +274,16 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       status: 'draft' as ExperimentStatus,
       experiment_date: new Date().toISOString().split('T')[0],
     };
-
-    if (templateVersionId) {
-      insertPayload.template_version_id = templateVersionId;
-    }
+    if (templateVersionId) insertPayload.template_version_id = templateVersionId;
 
     const { data, error } = await supabase
       .from('experiments')
       .insert(insertPayload)
       .select()
       .single();
-
     if (error) throw error;
-
     const experiment = data as Experiment;
 
-    // If a template version is provided, copy template blocks
     if (templateVersionId) {
       const { data: tv } = await supabase
         .from('template_versions')
@@ -301,32 +292,32 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         .single();
 
       if (tv?.content && Array.isArray(tv.content)) {
+        let prevKey: string | null = null;
         const templateBlocks = (tv.content as Array<{ type: BlockType; content: any }>).map(
-          (block, i) => ({
-            experiment_id: experiment.id,
-            type: block.type,
-            content: block.content,
-            order_key: orderKeyAt(i),
-          })
+          (block) => {
+            const key = generateKeyBetween(prevKey, null);
+            prevKey = key;
+            return {
+              experiment_id: experiment.id,
+              type: block.type,
+              content: block.content,
+              order_key: key,
+            };
+          }
         );
-
         if (templateBlocks.length > 0) {
           await supabase.from('experiment_blocks').insert(templateBlocks);
         }
       }
     }
 
-    set((state) => ({
-      experiments: [experiment, ...state.experiments],
-    }));
-
+    set((state) => ({ experiments: [experiment, ...state.experiments] }));
     return experiment;
   },
 
   fetchExperiment: async (id) => {
     set({ loading: true });
     try {
-      // Fetch experiment with joins
       const { data, error } = await supabase
         .from('experiments')
         .select(
@@ -334,19 +325,16 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         )
         .eq('id', id)
         .single();
-
       if (error) throw error;
 
       let experiment = data as Experiment;
 
-      // Fetch tags for this experiment
       const { data: tagRows } = await supabase
         .from('experiment_tags')
         .select('tag:tags(*)')
         .eq('experiment_id', id);
       experiment.tags = (tagRows ?? []).map((r) => r.tag as unknown as Tag);
 
-      // Check if favorited
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData.user?.id;
       if (userId) {
@@ -360,8 +348,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       }
 
       set({ currentExperiment: experiment });
-
-      // Also fetch blocks
       await get().fetchBlocks(id);
     } catch (error) {
       console.error('Failed to fetch experiment:', error);
@@ -377,7 +363,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       .eq('id', id)
       .select()
       .single();
-
     if (error) throw error;
 
     const updated = data as Experiment;
@@ -390,28 +375,172 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     }));
   },
 
-  updateExperimentStatus: async (id, status) => {
-    const isLocked = status === 'locked';
+  // ── Domain status RPCs ─────────────────────
+
+  startExperiment: async (id) => {
+    const { error } = await supabase.rpc('start_experiment', { p_experiment_id: id });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  completeExperiment: async (id) => {
+    const { error } = await supabase.rpc('complete_experiment', { p_experiment_id: id });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  reopenExperiment: async (id) => {
+    const { error } = await supabase.rpc('reopen_experiment', { p_experiment_id: id });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  submitForReview: async (id, reviewerId) => {
+    await flushPendingBlocks();
+    const { data, error } = await supabase.rpc('submit_for_review', {
+      p_experiment_id: id,
+      p_reviewer_id: reviewerId,
+    });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+    return data;
+  },
+
+  approveExperiment: async (id, reviewId) => {
+    const { data, error } = await supabase.rpc('approve_experiment', {
+      p_experiment_id: id,
+      p_review_id: reviewId,
+    });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  requestChanges: async (id, reviewId, comment) => {
+    const { data, error } = await supabase.rpc('request_experiment_changes', {
+      p_experiment_id: id,
+      p_review_id: reviewId,
+      p_comment: comment ?? null,
+    });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  signAndLock: async (id) => {
+    await flushPendingBlocks();
+    const { data, error } = await supabase.rpc('sign_and_lock_experiment', {
+      p_experiment_id: id,
+    });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+    return data;
+  },
+
+  createAmendment: async (id, reason) => {
+    const { data, error } = await supabase.rpc('create_amendment', {
+      p_experiment_id: id,
+      p_reason: reason,
+    });
+    if (error) throw error;
+    await get().fetchExperiment(id);
+  },
+
+  // ── Blocks ────────────────────────────────────
+
+  fetchBlocks: async (experimentId) => {
     const { data, error } = await supabase
-      .from('experiments')
-      .update({
-        status,
-        is_locked: isLocked,
+      .from('experiment_blocks')
+      .select('*')
+      .eq('experiment_id', experimentId)
+      .order('order_key', { ascending: true });
+    if (error) throw error;
+    set({ blocks: (data ?? []) as ExperimentBlock[] });
+  },
+
+  addBlock: async (experimentId, type, content, afterBlockId) => {
+    const { blocks } = get();
+    const sorted = [...blocks].sort((a, b) => a.order_key.localeCompare(b.order_key));
+    let newOrderKey: string;
+
+    if (afterBlockId) {
+      const afterIndex = sorted.findIndex((b) => b.id === afterBlockId);
+      const afterKey = afterIndex >= 0 ? sorted[afterIndex].order_key : null;
+      const nextKey =
+        afterIndex >= 0 && afterIndex + 1 < sorted.length
+          ? sorted[afterIndex + 1].order_key
+          : null;
+      newOrderKey = generateKeyBetween(afterKey, nextKey);
+    } else {
+      const lastKey = sorted.length > 0 ? sorted[sorted.length - 1].order_key : null;
+      newOrderKey = generateKeyBetween(lastKey, null);
+    }
+
+    const { data, error } = await supabase
+      .from('experiment_blocks')
+      .insert({
+        experiment_id: experimentId,
+        type,
+        content,
+        order_key: newOrderKey,
       })
-      .eq('id', id)
       .select()
       .single();
-
     if (error) throw error;
 
-    const updated = data as Experiment;
-    set((state) => ({
-      experiments: state.experiments.map((e) => (e.id === id ? { ...e, ...updated } : e)),
-      currentExperiment:
-        state.currentExperiment?.id === id
-          ? { ...state.currentExperiment, ...updated }
-          : state.currentExperiment,
-    }));
+    const newBlock = data as ExperimentBlock;
+    set((state) => {
+      const updated = [...state.blocks, newBlock].sort((a, b) =>
+        a.order_key.localeCompare(b.order_key)
+      );
+      return { blocks: updated };
+    });
+
+    return newBlock;
+  },
+
+  updateBlock: (blockId, content) => {
+    set((state) => {
+      const updatedBlocks = state.blocks.map((b) => {
+        if (b.id === blockId) {
+          const updated = { ...b, content, updated_at: new Date().toISOString() };
+          pendingBlockChanges.set(blockId, updated);
+          return updated;
+        }
+        return b;
+      });
+      return { blocks: updatedBlocks };
+    });
+    scheduleSave();
+  },
+
+  deleteBlock: async (blockId) => {
+    pendingBlockChanges.delete(blockId);
+    const { error } = await supabase.from('experiment_blocks').delete().eq('id', blockId);
+    if (error) throw error;
+    set((state) => ({ blocks: state.blocks.filter((b) => b.id !== blockId) }));
+  },
+
+  reorderBlocks: async (experimentId, blockId, newOrderKey) => {
+    set((state) => {
+      const updatedBlocks = state.blocks
+        .map((b) => (b.id === blockId ? { ...b, order_key: newOrderKey } : b))
+        .sort((a, b) => a.order_key.localeCompare(b.order_key));
+      return { blocks: updatedBlocks };
+    });
+
+    const { error } = await supabase
+      .from('experiment_blocks')
+      .update({ order_key: newOrderKey })
+      .eq('id', blockId);
+
+    if (error) {
+      console.error('Failed to reorder block:', error);
+      await get().fetchBlocks(experimentId);
+    }
+  },
+
+  saveBlocks: () => {
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    flushPendingBlocks();
   },
 
   duplicateExperiment: async (id, options = {}) => {
@@ -421,17 +550,14 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     const userId = userData.user?.id;
     if (!userId) throw new Error('Not authenticated');
 
-    // Fetch source experiment
     const { data: source, error: fetchError } = await supabase
       .from('experiments')
       .select('*')
       .eq('id', id)
       .single();
-
     if (fetchError) throw fetchError;
     const src = source as Experiment;
 
-    // Create duplicate
     const { data: dup, error: dupError } = await supabase
       .from('experiments')
       .insert({
@@ -446,11 +572,9 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       })
       .select()
       .single();
-
     if (dupError) throw dupError;
     const duplicated = dup as Experiment;
 
-    // Copy blocks if requested
     if (includeBlocks) {
       const { data: srcBlocks } = await supabase
         .from('experiment_blocks')
@@ -469,7 +593,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       }
     }
 
-    // Copy protocol associations if requested
     if (includeProtocols) {
       const { data: srcProtocols } = await supabase
         .from('experiment_protocols')
@@ -487,10 +610,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       }
     }
 
-    set((state) => ({
-      experiments: [duplicated, ...state.experiments],
-    }));
-
+    set((state) => ({ experiments: [duplicated, ...state.experiments] }));
     return duplicated;
   },
 
@@ -499,13 +619,10 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       .from('experiments')
       .update({ is_archived: true, status: 'archived' as ExperimentStatus })
       .eq('id', id);
-
     if (error) throw error;
-
     set((state) => ({
       experiments: state.experiments.filter((e) => e.id !== id),
-      currentExperiment:
-        state.currentExperiment?.id === id ? null : state.currentExperiment,
+      currentExperiment: state.currentExperiment?.id === id ? null : state.currentExperiment,
     }));
   },
 
@@ -516,133 +633,9 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       .eq('id', id)
       .select()
       .single();
-
     if (error) throw error;
-
     const restored = data as Experiment;
-    set((state) => ({
-      experiments: [restored, ...state.experiments],
-    }));
-  },
-
-  // ── Blocks ────────────────────────────────────
-
-  fetchBlocks: async (experimentId) => {
-    const { data, error } = await supabase
-      .from('experiment_blocks')
-      .select('*')
-      .eq('experiment_id', experimentId)
-      .order('order_key', { ascending: true });
-
-    if (error) throw error;
-    set({ blocks: (data ?? []) as ExperimentBlock[] });
-  },
-
-  addBlock: async (experimentId, type, content, afterBlockId) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
-    const { blocks } = get();
-    let newOrderKey: string;
-
-    if (afterBlockId) {
-      const afterIndex = blocks.findIndex((b) => b.id === afterBlockId);
-      const afterKey = afterIndex >= 0 ? blocks[afterIndex].order_key : null;
-      const nextKey =
-        afterIndex >= 0 && afterIndex + 1 < blocks.length
-          ? blocks[afterIndex + 1].order_key
-          : null;
-      newOrderKey = orderKeyBetween(afterKey, nextKey);
-    } else {
-      // Append at the end
-      const lastKey = blocks.length > 0 ? blocks[blocks.length - 1].order_key : null;
-      newOrderKey = orderKeyBetween(lastKey, null);
-    }
-
-    const { data, error } = await supabase
-      .from('experiment_blocks')
-      .insert({
-        experiment_id: experimentId,
-        type,
-        content,
-        order_key: newOrderKey,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    const newBlock = data as ExperimentBlock;
-
-    set((state) => {
-      const updated = [...state.blocks, newBlock].sort((a, b) =>
-        a.order_key.localeCompare(b.order_key)
-      );
-      return { blocks: updated };
-    });
-
-    return newBlock;
-  },
-
-  updateBlock: (blockId, content) => {
-    // Optimistically update local state and queue for autosave
-    set((state) => {
-      const updatedBlocks = state.blocks.map((b) => {
-        if (b.id === blockId) {
-          const updated = { ...b, content, updated_at: new Date().toISOString() };
-          pendingBlockChanges.set(blockId, updated);
-          return updated;
-        }
-        return b;
-      });
-      return { blocks: updatedBlocks };
-    });
-
-    scheduleSave();
-  },
-
-  deleteBlock: async (blockId) => {
-    // Remove from pending changes if queued
-    pendingBlockChanges.delete(blockId);
-
-    const { error } = await supabase
-      .from('experiment_blocks')
-      .delete()
-      .eq('id', blockId);
-
-    if (error) throw error;
-
-    set((state) => ({
-      blocks: state.blocks.filter((b) => b.id !== blockId),
-    }));
-  },
-
-  reorderBlocks: async (experimentId, blockId, newOrderKey) => {
-    // Optimistically update local state
-    set((state) => {
-      const updatedBlocks = state.blocks
-        .map((b) => (b.id === blockId ? { ...b, order_key: newOrderKey } : b))
-        .sort((a, b) => a.order_key.localeCompare(b.order_key));
-      return { blocks: updatedBlocks };
-    });
-
-    const { error } = await supabase
-      .from('experiment_blocks')
-      .update({ order_key: newOrderKey })
-      .eq('id', blockId);
-
-    if (error) {
-      console.error('Failed to reorder block:', error);
-      // Refetch to restore consistent state
-      await get().fetchBlocks(experimentId);
-    }
-  },
-
-  saveBlocks: () => {
-    // Force an immediate flush of pending block changes
-    if (autosaveTimer) clearTimeout(autosaveTimer);
-    flushPendingBlocks();
+    set((state) => ({ experiments: [restored, ...state.experiments] }));
   },
 
   // ── Favorites ─────────────────────────────────
@@ -692,7 +685,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     const workspaceId = currentExperiment?.workspace_id;
     if (!workspaceId) throw new Error('No workspace context');
 
-    // Find or create the tag
     let { data: existingTag } = await supabase
       .from('tags')
       .select('*')
@@ -712,11 +704,9 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
     const tag = existingTag as Tag;
 
-    // Link tag to experiment
     const { error } = await supabase
       .from('experiment_tags')
       .insert({ experiment_id: experimentId, tag_id: tag.id });
-
     if (error) throw error;
 
     set((state) => ({
@@ -736,7 +726,6 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       .delete()
       .eq('experiment_id', experimentId)
       .eq('tag_id', tagId);
-
     if (error) throw error;
 
     set((state) => ({
@@ -750,79 +739,36 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     }));
   },
 
-  // ── Revisions ─────────────────────────────────
+  // ── Revisions (server-side RPC) ──────────────
 
   createRevision: async (experimentId, changeSummary, changeType) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
-    // Flush any pending block changes first
     await flushPendingBlocks();
-
-    // Fetch current blocks for the snapshot
-    const { data: currentBlocks, error: blocksError } = await supabase
-      .from('experiment_blocks')
-      .select('*')
-      .eq('experiment_id', experimentId)
-      .order('order_key', { ascending: true });
-
-    if (blocksError) throw blocksError;
-
-    // Compute a simple hash of the content
-    const snapshotJson = JSON.stringify(currentBlocks ?? []);
-    const contentHash = await computeHash(snapshotJson);
-
-    // Get the next revision number
-    const { currentExperiment } = get();
-    const nextRevision = (currentExperiment?.current_revision ?? 0) + 1;
-
-    const { error } = await supabase.from('experiment_revisions').insert({
-      experiment_id: experimentId,
-      revision_number: nextRevision,
-      snapshot: currentBlocks,
-      content_hash: contentHash,
-      change_summary: changeSummary,
-      change_type: changeType,
-      created_by: userId,
+    const { data, error } = await supabase.rpc('create_revision', {
+      p_experiment_id: experimentId,
+      p_change_summary: changeSummary,
+      p_change_type: changeType,
     });
-
     if (error) throw error;
 
-    // Update the experiment's current_revision
-    await supabase
-      .from('experiments')
-      .update({ current_revision: nextRevision, updated_at: new Date().toISOString() })
-      .eq('id', experimentId);
-
-    set((state) => ({
-      currentExperiment:
-        state.currentExperiment?.id === experimentId
-          ? { ...state.currentExperiment, current_revision: nextRevision }
-          : state.currentExperiment,
-    }));
+    const revisionNumber = (data as any)?.revision_number;
+    if (revisionNumber) {
+      set((state) => ({
+        currentExperiment:
+          state.currentExperiment?.id === experimentId
+            ? { ...state.currentExperiment, current_revision: revisionNumber }
+            : state.currentExperiment,
+      }));
+    }
+    return data;
   },
 
   // ── Filters ───────────────────────────────────
 
   setFilters: (filters) => {
-    set((state) => ({
-      filters: { ...state.filters, ...filters },
-    }));
+    set((state) => ({ filters: { ...state.filters, ...filters } }));
   },
 
   clearFilters: () => {
     set({ filters: { ...DEFAULT_FILTERS } });
   },
 }));
-
-// ──────────────────────────────────────────────
-// Utility: SHA-256 hash (browser crypto API)
-// ──────────────────────────────────────────────
-async function computeHash(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}

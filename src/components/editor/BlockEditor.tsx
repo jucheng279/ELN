@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { generateKeyBetween } from 'fractional-indexing';
 import { useExperimentStore } from '@/stores/experimentStore';
 import BlockRenderer from '@/components/editor/BlockRenderer';
 import BlockTypeMenu from '@/components/editor/BlockTypeMenu';
@@ -48,16 +49,7 @@ const DEFAULT_CONTENT: Record<BlockType, () => any> = {
   }),
 };
 
-// ──────────────────────────────────────────────
-// Helper: generate an order key between two existing keys
-// ──────────────────────────────────────────────
 
-function orderKeyBetween(before: string | null, after: string | null): string {
-  if (!before && !after) return 'a0';
-  if (!before) return (after ?? 'a0').slice(0, -1) + '0';
-  if (!after) return before + '1';
-  return before + '8';
-}
 
 // ──────────────────────────────────────────────
 // Props
@@ -65,6 +57,7 @@ function orderKeyBetween(before: string | null, after: string | null): string {
 
 interface BlockEditorProps {
   experimentId: string;
+  workspaceId: string;
   readOnly: boolean;
 }
 
@@ -72,7 +65,14 @@ interface BlockEditorProps {
 // Component
 // ──────────────────────────────────────────────
 
-export default function BlockEditor({ experimentId, readOnly }: BlockEditorProps) {
+export default function BlockEditor({ experimentId, workspaceId, readOnly }: BlockEditorProps) {
+  const initSession = useExperimentStore((s) => s.initSession);
+  const teardownSession = useExperimentStore((s) => s.teardownSession);
+
+  useEffect(() => {
+    initSession(experimentId);
+    return () => teardownSession();
+  }, [experimentId, initSession, teardownSession]);
   const blocks = useExperimentStore((s) => s.blocks);
   const addBlock = useExperimentStore((s) => s.addBlock);
   const updateBlock = useExperimentStore((s) => s.updateBlock);
@@ -240,7 +240,7 @@ export default function BlockEditor({ experimentId, readOnly }: BlockEditorProps
             : null
           : nextKey;
 
-      const newOrderKey = orderKeyBetween(safePrevKey, safeNextKey);
+      const newOrderKey = generateKeyBetween(safePrevKey, safeNextKey);
       await reorderBlocks(experimentId, blockId, newOrderKey);
 
       setDraggedBlockId(null);
@@ -408,6 +408,8 @@ export default function BlockEditor({ experimentId, readOnly }: BlockEditorProps
                 block={block}
                 onUpdate={handleUpdateBlock(block.id)}
                 readOnly={readOnly}
+                workspaceId={workspaceId}
+                experimentId={experimentId}
                 onSlashCommand={
                   block.type === 'paragraph'
                     ? (rect: { top: number; left: number }) =>

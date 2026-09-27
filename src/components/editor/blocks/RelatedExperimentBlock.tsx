@@ -1,6 +1,10 @@
 import { useState, useCallback } from 'react';
 import { FlaskConical, ExternalLink, X, Search, Link } from 'lucide-react';
-import StatusBadge from '@/components/common/StatusBadge';
+import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import type { ExperimentStatus } from '@/lib/types';
 
 interface RelatedExperimentBlockContent {
@@ -47,43 +51,40 @@ export default function RelatedExperimentBlock({
     });
   }, [onUpdate]);
 
-  // Empty state - no experiment linked
   if (!isLinked) {
     return (
-      <div className="rounded-lg border-2 border-dashed border-gray-300 p-5">
+      <div className="rounded-md border-2 border-dashed border-border p-5">
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex items-center gap-2 text-gray-400">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <FlaskConical className="h-5 w-5" />
             <Search className="h-4 w-4" />
           </div>
-          <p className="text-sm text-gray-500">Search for an experiment...</p>
+          <p className="text-sm text-muted-foreground">Search for an experiment...</p>
           {!readOnly && (
             <div className="w-full max-w-sm space-y-2">
-              <input
-                type="text"
+              <Input
                 value={displayIdInput}
                 onChange={(e) => setDisplayIdInput(e.target.value)}
                 placeholder="Experiment ID (e.g. EXP-001)"
-                className="w-full text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="h-8 text-sm"
               />
-              <input
-                type="text"
+              <Input
                 value={titleInput}
                 onChange={(e) => setTitleInput(e.target.value)}
                 placeholder="Experiment title"
-                className="w-full text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="h-8 text-sm"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleLinkExperiment();
                 }}
               />
-              <button
+              <Button
+                size="sm"
                 onClick={handleLinkExperiment}
                 disabled={!displayIdInput.trim() || !titleInput.trim()}
-                className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Link className="h-3.5 w-3.5" />
+                <Link className="h-3.5 w-3.5 mr-1.5" />
                 Link Experiment
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -91,41 +92,43 @@ export default function RelatedExperimentBlock({
     );
   }
 
-  // Linked state
   return (
-    <div className="rounded-lg border border-gray-200 p-3 flex items-center gap-3">
-      <div className="shrink-0 text-gray-400">
+    <div className="rounded-md border border-border p-3 flex items-center gap-3">
+      <div className="shrink-0 text-muted-foreground">
         <FlaskConical className="h-5 w-5" />
       </div>
 
-      <span className="font-mono text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded shrink-0">
+      <span className="font-mono text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded shrink-0">
         {content.experiment_display_id}
       </span>
 
-      <span className="font-medium text-gray-900 truncate">{content.title}</span>
+      <span className="font-medium text-foreground truncate">{content.title}</span>
 
       {content.status && (
         <div className="shrink-0">
-          <StatusBadge status={content.status as ExperimentStatus} />
+          <ExperimentStatusBadge status={content.status as ExperimentStatus} />
         </div>
       )}
 
       <div className="ml-auto flex items-center gap-1 shrink-0">
-        <button
-          className="p-1 text-gray-400 hover:text-blue-600 rounded hover:bg-gray-100"
-          title="Open experiment"
-        >
-          <ExternalLink className="h-4 w-4" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="h-7 w-7">
+              <ExternalLink className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open experiment</TooltipContent>
+        </Tooltip>
 
         {!readOnly && (
-          <button
-            onClick={handleUnlink}
-            className="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-gray-100"
-            title="Unlink experiment"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={handleUnlink}>
+                <X className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Unlink experiment</TooltipContent>
+          </Tooltip>
         )}
       </div>
     </div>

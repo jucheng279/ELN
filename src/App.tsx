@@ -1,6 +1,9 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { Loader2 } from 'lucide-react';
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'));
 const SignUpPage = lazy(() => import('@/pages/auth/SignUpPage'));
@@ -26,8 +29,8 @@ const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 
 function Spinner() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
     </div>
   );
 }
@@ -57,38 +60,41 @@ export default function App() {
   }, [initialize]);
 
   return (
-    <BrowserRouter>
-      <Suspense fallback={<Spinner />}>
-        <Routes>
-          <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />
-          <Route path="/signup" element={<GuestGuard><SignUpPage /></GuestGuard>} />
-          <Route path="/forgot-password" element={<GuestGuard><ForgotPasswordPage /></GuestGuard>} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/invite" element={<InvitationAcceptPage />} />
+    <TooltipProvider delay={300}>
+      <BrowserRouter>
+        <Suspense fallback={<Spinner />}>
+          <Routes>
+            <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />
+            <Route path="/signup" element={<GuestGuard><SignUpPage /></GuestGuard>} />
+            <Route path="/forgot-password" element={<GuestGuard><ForgotPasswordPage /></GuestGuard>} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/invite" element={<InvitationAcceptPage />} />
 
-          <Route path="/workspaces" element={<AuthGuard><WorkspaceSelectPage /></AuthGuard>} />
+            <Route path="/workspaces" element={<AuthGuard><WorkspaceSelectPage /></AuthGuard>} />
 
-          <Route path="/app" element={<AuthGuard><AppLayout /></AuthGuard>}>
-            <Route index element={<ExperimentListPage />} />
-            <Route path="experiments" element={<ExperimentListPage />} />
-            <Route path="experiments/:id" element={<ExperimentPage />} />
-            <Route path="my-experiments" element={<MyExperimentsPage />} />
-            <Route path="favorites" element={<FavoritesPage />} />
-            <Route path="recent" element={<RecentPage />} />
-            <Route path="archived" element={<ArchivedPage />} />
-            <Route path="notebooks/new" element={<CreateNotebookPage />} />
-            <Route path="notebooks/:id" element={<NotebookPage />} />
-            <Route path="templates" element={<TemplatesPage />} />
-            <Route path="templates/:id" element={<TemplateEditorPage />} />
-            <Route path="protocols" element={<ProtocolsPage />} />
-            <Route path="protocols/:id" element={<ProtocolEditorPage />} />
-            <Route path="search" element={<SearchPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-          </Route>
+            <Route path="/app" element={<AuthGuard><AppLayout /></AuthGuard>}>
+              <Route index element={<ExperimentListPage />} />
+              <Route path="experiments" element={<ExperimentListPage />} />
+              <Route path="experiments/:id" element={<ExperimentPage />} />
+              <Route path="my-experiments" element={<MyExperimentsPage />} />
+              <Route path="favorites" element={<FavoritesPage />} />
+              <Route path="recent" element={<RecentPage />} />
+              <Route path="archived" element={<ArchivedPage />} />
+              <Route path="notebooks/new" element={<CreateNotebookPage />} />
+              <Route path="notebooks/:id" element={<NotebookPage />} />
+              <Route path="templates" element={<TemplatesPage />} />
+              <Route path="templates/:id" element={<TemplateEditorPage />} />
+              <Route path="protocols" element={<ProtocolsPage />} />
+              <Route path="protocols/:id" element={<ProtocolEditorPage />} />
+              <Route path="search" element={<SearchPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
 
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+      <Toaster position="bottom-right" richColors closeButton />
+    </TooltipProvider>
   );
 }

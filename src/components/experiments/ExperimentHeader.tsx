@@ -1,10 +1,44 @@
 import { useState, useRef, useEffect } from 'react';
 import { useExperimentStore } from '@/stores/experimentStore';
-import StatusBadge from '@/components/common/StatusBadge';
-import DropdownMenu from '@/components/common/DropdownMenu';
+import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import type { Experiment, ExperimentStatus } from '@/lib/types';
-import { Star, MoreHorizontal, X, Plus, Calendar, FileDown } from 'lucide-react';
+import {
+  Star,
+  MoreHorizontal,
+  X,
+  Plus,
+  Calendar,
+  FileDown,
+  Lock,
+  Loader2,
+  Check,
+  Clock,
+  Copy,
+  Archive,
+} from 'lucide-react';
 import { exportExperimentPdf } from '@/lib/pdfExport';
+import { cn } from '@/lib/utils';
 
 const ALL_STATUSES: ExperimentStatus[] = [
   'draft',
@@ -31,9 +65,16 @@ const STATUS_LABELS: Record<ExperimentStatus, string> = {
 interface ExperimentHeaderProps {
   experiment: Experiment;
   readOnly: boolean;
+  saving?: boolean;
+  lastSaved?: Date | null;
 }
 
-export default function ExperimentHeader({ experiment, readOnly }: ExperimentHeaderProps) {
+export default function ExperimentHeader({
+  experiment,
+  readOnly,
+  saving,
+  lastSaved,
+}: ExperimentHeaderProps) {
   const {
     updateExperiment,
     updateExperimentStatus,
@@ -46,10 +87,9 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(experiment.title);
-  const [showTagInput, setShowTagInput] = useState(false);
   const [tagInputValue, setTagInputValue] = useState('');
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const tagInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setTitleValue(experiment.title);
@@ -61,12 +101,6 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
       titleInputRef.current.select();
     }
   }, [editingTitle]);
-
-  useEffect(() => {
-    if (showTagInput && tagInputRef.current) {
-      tagInputRef.current.focus();
-    }
-  }, [showTagInput]);
 
   const handleTitleSave = () => {
     setEditingTitle(false);
@@ -96,7 +130,7 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
     if (trimmed) {
       addTag(experiment.id, trimmed);
       setTagInputValue('');
-      setShowTagInput(false);
+      setTagPopoverOpen(false);
     }
   };
 
@@ -105,49 +139,27 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
       handleAddTag();
     } else if (e.key === 'Escape') {
       setTagInputValue('');
-      setShowTagInput(false);
+      setTagPopoverOpen(false);
     }
   };
-
-  const statusMenuItems = ALL_STATUSES
-    .filter((s) => s !== experiment.status)
-    .map((status) => ({
-      label: STATUS_LABELS[status],
-      onClick: () => updateExperimentStatus(experiment.id, status),
-    }));
-
-  const moreActionsItems = [
-    {
-      label: 'Duplicate',
-      onClick: () => duplicateExperiment(experiment.id),
-    },
-    {
-      label: 'Export PDF',
-      icon: FileDown,
-      onClick: async () => {
-        const { blocks } = useExperimentStore.getState();
-        await exportExperimentPdf(experiment, blocks);
-      },
-    },
-    {
-      label: 'Archive',
-      onClick: () => archiveExperiment(experiment.id),
-    },
-
-  ];
 
   const formattedDate = experiment.experiment_date
     ? new Date(experiment.experiment_date).toISOString().split('T')[0]
     : '';
 
   return (
-    <div className="border-b border-gray-200 bg-white px-6 py-3">
+    <div className={cn('border-b bg-background px-6 py-3')}>
       {/* Top row */}
-      <div className="flex items-center gap-3">
-        {/* Experiment ID badge */}
-        <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs font-mono text-gray-600">
+      <div className="flex items-center gap-2">
+        {/* Experiment ID */}
+        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
           {experiment.experiment_id}
         </span>
+
+        {/* Lock icon when locked */}
+        {experiment.is_locked && (
+          <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
 
         {/* Editable title */}
         {editingTitle && !readOnly ? (
@@ -158,71 +170,142 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
             onChange={(e) => setTitleValue(e.target.value)}
             onBlur={handleTitleSave}
             onKeyDown={handleTitleKeyDown}
-            className="flex-1 rounded border border-blue-300 px-2 py-0.5 text-xl font-semibold text-gray-900 outline-none ring-2 ring-blue-100"
+            className={cn(
+              'flex-1 rounded-md border border-ring px-2 py-0.5 text-xl font-semibold text-foreground outline-none ring-2 ring-ring/20'
+            )}
           />
         ) : (
           <h1
-            className={`text-xl font-semibold text-gray-900 truncate ${
-              !readOnly ? 'cursor-text hover:bg-gray-50 rounded px-2 py-0.5 -mx-2' : ''
-            }`}
+            className={cn(
+              'truncate text-xl font-semibold text-foreground',
+              !readOnly && 'cursor-text rounded-md px-2 py-0.5 -mx-2 hover:bg-muted'
+            )}
             onClick={() => !readOnly && setEditingTitle(true)}
           >
             {experiment.title}
           </h1>
         )}
 
+        {/* Save status indicator (subtle, near title) */}
+        <span className="shrink-0 flex items-center gap-1 text-xs text-muted-foreground">
+          {saving ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Saving…</span>
+            </>
+          ) : lastSaved ? (
+            <>
+              <Check className="h-3 w-3 text-green-600" />
+              <span>Saved</span>
+            </>
+          ) : lastSaved === null ? (
+            <>
+              <Clock className="h-3 w-3 text-amber-500" />
+              <span className="text-amber-600">Unsaved</span>
+            </>
+          ) : null}
+        </span>
+
         {/* Status badge */}
-        <StatusBadge status={experiment.status} />
+        <ExperimentStatusBadge status={experiment.status} />
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Favorite star */}
-        <button
-          onClick={() => toggleFavorite(experiment.id)}
-          className="rounded p-1.5 hover:bg-gray-100 transition-colors"
-          title={experiment.is_favorited ? 'Remove from favorites' : 'Add to favorites'}
-        >
-          <Star
-            className={`h-5 w-5 ${
-              experiment.is_favorited
-                ? 'fill-yellow-400 text-yellow-400'
-                : 'text-gray-400'
-            }`}
-          />
-        </button>
+        {/* Favorite */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => toggleFavorite(experiment.id)}
+              />
+            }
+          >
+            <Star
+              className={cn(
+                'h-4 w-4',
+                experiment.is_favorited
+                  ? 'fill-yellow-400 text-yellow-400'
+                  : 'text-muted-foreground'
+              )}
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            {experiment.is_favorited ? 'Remove from favorites' : 'Add to favorites'}
+          </TooltipContent>
+        </Tooltip>
 
         {/* Status dropdown */}
         {!readOnly && (
-          <DropdownMenu
-            trigger={
-              <button className="rounded border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                Change status
-              </button>
-            }
-            items={statusMenuItems}
-            align="right"
-          />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" size="xs" />}
+            >
+              Change status
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {ALL_STATUSES.filter((s) => s !== experiment.status).map(
+                (status) => (
+                  <DropdownMenuItem
+                    key={status}
+                    onClick={() =>
+                      updateExperimentStatus(experiment.id, status)
+                    }
+                  >
+                    {STATUS_LABELS[status]}
+                  </DropdownMenuItem>
+                )
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
 
         {/* More actions */}
-        <DropdownMenu
-          trigger={
-            <button className="rounded p-1.5 hover:bg-gray-100 transition-colors">
-              <MoreHorizontal className="h-5 w-5 text-gray-500" />
-            </button>
-          }
-          items={moreActionsItems}
-          align="right"
-        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="ghost" size="icon-sm" />}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => duplicateExperiment(experiment.id)}
+            >
+              <Copy className="h-4 w-4" />
+              Duplicate
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                const { blocks } = useExperimentStore.getState();
+                await exportExperimentPdf(experiment, blocks);
+              }}
+            >
+              <FileDown className="h-4 w-4" />
+              Export PDF
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => archiveExperiment(experiment.id)}
+            >
+              <Archive className="h-4 w-4" />
+              Archive
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Bottom row */}
-      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         {/* Notebook */}
         {experiment.notebook?.name && (
           <span>
-            in <span className="font-medium text-gray-700">{experiment.notebook.name}</span>
+            in{' '}
+            <span className="font-medium text-foreground">
+              {experiment.notebook.name}
+            </span>
           </span>
         )}
 
@@ -230,7 +313,7 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
         {experiment.created_by_profile?.display_name && (
           <span>
             by{' '}
-            <span className="font-medium text-gray-700">
+            <span className="font-medium text-foreground">
               {experiment.created_by_profile.display_name}
             </span>
           </span>
@@ -246,63 +329,66 @@ export default function ExperimentHeader({ experiment, readOnly }: ExperimentHea
               type="date"
               value={formattedDate}
               onChange={handleDateChange}
-              className="border-none bg-transparent p-0 text-sm text-gray-500 outline-none hover:text-gray-700 cursor-pointer"
+              className={cn(
+                'border-none bg-transparent p-0 text-sm text-muted-foreground outline-none',
+                'hover:text-foreground cursor-pointer'
+              )}
             />
           )}
         </span>
 
-        {/* Separator */}
-        <span className="text-gray-300">|</span>
+        <Separator orientation="vertical" className="h-4" />
 
         {/* Tags */}
         <div className="flex flex-wrap items-center gap-1.5">
           {experiment.tags?.map((tag) => (
-            <span
+            <Badge
               key={tag.id}
-              className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700"
+              variant="secondary"
+              className="gap-1 text-xs font-normal"
             >
               {tag.name}
               {!readOnly && (
                 <button
                   onClick={() => removeTag(experiment.id, tag.id)}
-                  className="rounded-full p-0.5 hover:bg-blue-100"
+                  className="rounded-full p-0.5 hover:bg-foreground/10"
                 >
                   <X className="h-3 w-3" />
                 </button>
               )}
-            </span>
+            </Badge>
           ))}
 
-          {/* Add tag */}
+          {/* Add tag via Popover */}
           {!readOnly && (
-            <>
-              {showTagInput ? (
-                <input
-                  ref={tagInputRef}
-                  type="text"
+            <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+              <PopoverTrigger
+                render={
+                  <Button variant="ghost" size="xs" className="gap-0.5 text-muted-foreground" />
+                }
+              >
+                <Plus className="h-3 w-3" />
+                Add tag
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-2" align="start">
+                <Input
                   value={tagInputValue}
                   onChange={(e) => setTagInputValue(e.target.value)}
-                  onBlur={() => {
-                    if (!tagInputValue.trim()) {
-                      setShowTagInput(false);
-                    } else {
-                      handleAddTag();
-                    }
-                  }}
                   onKeyDown={handleTagKeyDown}
                   placeholder="Tag name"
-                  className="w-24 rounded-full border border-gray-300 px-2 py-0.5 text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100"
+                  className="h-7 text-xs"
+                  autoFocus
                 />
-              ) : (
-                <button
-                  onClick={() => setShowTagInput(true)}
-                  className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-xs text-gray-400 hover:border-gray-400 hover:text-gray-500 transition-colors"
+                <Button
+                  size="xs"
+                  className="mt-1.5 w-full"
+                  disabled={!tagInputValue.trim()}
+                  onClick={handleAddTag}
                 >
-                  <Plus className="h-3 w-3" />
-                  Add tag
-                </button>
-              )}
-            </>
+                  Add
+                </Button>
+              </PopoverContent>
+            </Popover>
           )}
         </div>
       </div>

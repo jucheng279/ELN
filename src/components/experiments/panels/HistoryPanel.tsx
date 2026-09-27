@@ -4,33 +4,66 @@ import {
   History,
   GitBranch,
   Plus,
-  ChevronDown,
-  FileText,
-  Shield,
   PenLine,
+  Shield,
   Eye,
+  Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import type { ExperimentRevision, AuditEvent } from '@/lib/types';
-import Button from '@/components/common/Button';
-import Dialog from '@/components/common/Dialog';
-import EmptyState from '@/components/common/EmptyState';
-
-// ── Constants ────────────────────────────────────
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import EmptyState from '@/components/eln/EmptyState';
+import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
 
-const CHANGE_TYPE_CONFIG: Record<string, { icon: typeof PenLine; label: string; color: string }> = {
-  created: { icon: Plus, label: 'Created', color: 'text-green-600 bg-green-50' },
-  edit: { icon: PenLine, label: 'Edited', color: 'text-blue-600 bg-blue-50' },
-  status_change: { icon: GitBranch, label: 'Status changed', color: 'text-amber-600 bg-amber-50' },
-  approval: { icon: Shield, label: 'Approved', color: 'text-emerald-600 bg-emerald-50' },
-  signature: { icon: Shield, label: 'Signed', color: 'text-purple-600 bg-purple-50' },
-  checkpoint: { icon: History, label: 'Checkpoint', color: 'text-gray-600 bg-gray-100' },
+const CHANGE_TYPE_CONFIG: Record<
+  string,
+  { icon: typeof PenLine; label: string; className: string }
+> = {
+  created: {
+    icon: Plus,
+    label: 'Created',
+    className: 'text-green-600 bg-green-50',
+  },
+  edit: {
+    icon: PenLine,
+    label: 'Edited',
+    className: 'text-blue-600 bg-blue-50',
+  },
+  status_change: {
+    icon: GitBranch,
+    label: 'Status changed',
+    className: 'text-amber-600 bg-amber-50',
+  },
+  approval: {
+    icon: Shield,
+    label: 'Approved',
+    className: 'text-emerald-600 bg-emerald-50',
+  },
+  signature: {
+    icon: Shield,
+    label: 'Signed',
+    className: 'text-sky-600 bg-sky-50',
+  },
+  checkpoint: {
+    icon: History,
+    label: 'Checkpoint',
+    className: 'text-muted-foreground bg-muted',
+  },
 };
-
-// ── Component ────────────────────────────────────
 
 export default function HistoryPanel() {
   const { currentExperiment, createRevision } = useExperimentStore();
@@ -41,9 +74,8 @@ export default function HistoryPanel() {
   const [loadingAudit, setLoadingAudit] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [creating, setCreating] = useState(false);
-
-  // Snapshot viewer
-  const [viewingRevision, setViewingRevision] = useState<ExperimentRevision | null>(null);
+  const [viewingRevision, setViewingRevision] =
+    useState<ExperimentRevision | null>(null);
 
   const fetchRevisions = useCallback(
     async (offset = 0) => {
@@ -52,7 +84,9 @@ export default function HistoryPanel() {
       try {
         const { data, error } = await supabase
           .from('experiment_revisions')
-          .select('*, profile:profiles!experiment_revisions_created_by_fkey(id, display_name)')
+          .select(
+            '*, profile:profiles!experiment_revisions_created_by_fkey(id, display_name)',
+          )
           .eq('experiment_id', currentExperiment.id)
           .order('created_at', { ascending: false })
           .range(offset, offset + PAGE_SIZE - 1);
@@ -81,7 +115,9 @@ export default function HistoryPanel() {
     try {
       const { data, error } = await supabase
         .from('audit_events')
-        .select('*, actor:profiles!audit_events_actor_id_fkey(id, display_name)')
+        .select(
+          '*, actor:profiles!audit_events_actor_id_fkey(id, display_name)',
+        )
         .eq('object_type', 'experiment')
         .eq('object_id', currentExperiment.id)
         .order('created_at', { ascending: false })
@@ -105,7 +141,11 @@ export default function HistoryPanel() {
     if (!currentExperiment) return;
     setCreating(true);
     try {
-      await createRevision(currentExperiment.id, 'Manual checkpoint', 'checkpoint');
+      await createRevision(
+        currentExperiment.id,
+        'Manual checkpoint',
+        'checkpoint',
+      );
       await fetchRevisions();
     } catch (err) {
       console.error('Failed to create checkpoint:', err);
@@ -120,46 +160,48 @@ export default function HistoryPanel() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-gray-200 p-3">
+      <div className="border-b p-3">
         <Button
-          variant="secondary"
+          variant="outline"
           size="sm"
-          fullWidth
-          loading={creating}
-          icon={<Plus size={14} />}
+          className="w-full"
+          disabled={currentExperiment?.is_locked || creating}
           onClick={handleCreateCheckpoint}
-          disabled={currentExperiment?.is_locked}
         >
+          {creating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" />
+          )}
           Create checkpoint
         </Button>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {/* Revisions timeline */}
+      <ScrollArea className="flex-1">
+        {/* Revisions */}
         <div className="p-3">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Revisions
           </h3>
 
           {loadingRevisions && revisions.length === 0 && (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="animate-pulse rounded bg-gray-50 p-2">
-                  <div className="h-3 w-20 rounded bg-gray-200" />
-                  <div className="mt-1 h-3 w-full rounded bg-gray-200" />
+                <div key={i} className="space-y-1.5 rounded-lg p-2">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-3 w-full" />
                 </div>
               ))}
             </div>
           )}
 
           {!loadingRevisions && revisions.length === 0 && (
-            <div className="py-6">
-              <EmptyState
-                icon={<History size={28} />}
-                title="No revisions"
-                description="Create a checkpoint to save the current state."
-              />
-            </div>
+            <EmptyState
+              icon={History}
+              title="No revisions"
+              description="Create a checkpoint to save the current state."
+              className="py-6"
+            />
           )}
 
           <div className="space-y-1">
@@ -171,31 +213,38 @@ export default function HistoryPanel() {
                 <button
                   key={rev.id}
                   onClick={() => setViewingRevision(rev)}
-                  className="group flex w-full items-start gap-2.5 rounded-md p-2 text-left transition-colors hover:bg-gray-50"
+                  className={cn(
+                    'group flex w-full items-start gap-2.5 rounded-lg p-2 text-left',
+                    'transition-colors hover:bg-muted'
+                  )}
                 >
-                  {/* Badge */}
                   <div
-                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded ${config.color}`}
+                    className={cn(
+                      'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded',
+                      config.className
+                    )}
                   >
-                    <Icon size={11} />
+                    <Icon className="h-3 w-3" />
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] text-gray-600">
+                      <span className="rounded-md bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
                         v{rev.revision_number}
                       </span>
-                      <span className="text-xs font-medium text-gray-700">
+                      <span className="text-xs font-medium text-foreground">
                         {config.label}
                       </span>
                     </div>
                     {rev.change_summary && (
-                      <p className="mt-0.5 truncate text-xs text-gray-500">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         {rev.change_summary}
                       </p>
                     )}
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-gray-400">
-                      <span>{rev.profile?.display_name ?? 'Unknown'}</span>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
+                      <span>
+                        {rev.profile?.display_name ?? 'Unknown'}
+                      </span>
                       <span>·</span>
                       <span>
                         {formatDistanceToNow(new Date(rev.created_at), {
@@ -205,90 +254,109 @@ export default function HistoryPanel() {
                     </div>
                   </div>
 
-                  <Eye
-                    size={12}
-                    className="mt-1 shrink-0 text-gray-300 opacity-0 group-hover:opacity-100"
-                  />
+                  <Eye className="mt-1 h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100" />
                 </button>
               );
             })}
           </div>
 
           {hasMore && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 w-full text-xs"
               onClick={() => fetchRevisions(revisions.length)}
-              className="mt-2 w-full rounded-md py-1.5 text-center text-xs font-medium text-blue-600 hover:bg-blue-50"
             >
               Load more
-            </button>
+            </Button>
           )}
         </div>
 
         {/* Audit events */}
         {auditEvents.length > 0 && (
-          <div className="border-t border-gray-200 p-3">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Audit log
-            </h3>
-            <div className="space-y-1.5">
-              {auditEvents.map((event) => (
-                <div
-                  key={event.id}
-                  className="rounded-md bg-gray-50 px-2.5 py-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-gray-700">
-                      {event.event_type.replace(/_/g, ' ')}
-                    </span>
-                    {event.revision_number !== null && (
-                      <span className="rounded bg-gray-200 px-1 py-0.5 font-mono text-[10px] text-gray-500">
-                        v{event.revision_number}
+          <>
+            <Separator />
+            <div className="p-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Audit log
+              </h3>
+              <div className="space-y-1.5">
+                {auditEvents.map((event) => (
+                  <div
+                    key={event.id}
+                    className="rounded-lg bg-muted/50 px-2.5 py-1.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">
+                        {event.event_type.replace(/_/g, ' ')}
                       </span>
-                    )}
+                      {event.revision_number !== null && (
+                        <Badge
+                          variant="secondary"
+                          className="font-mono text-[10px]"
+                        >
+                          v{event.revision_number}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">
+                      {event.actor?.display_name ?? 'System'} ·{' '}
+                      {formatDistanceToNow(new Date(event.created_at), {
+                        addSuffix: true,
+                      })}
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-[10px] text-gray-400">
-                    {event.actor?.display_name ?? 'System'} ·{' '}
-                    {formatDistanceToNow(new Date(event.created_at), {
-                      addSuffix: true,
-                    })}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         )}
-      </div>
+      </ScrollArea>
 
       {/* Snapshot viewer dialog */}
-      {viewingRevision && (
-        <Dialog
-          open={!!viewingRevision}
-          onClose={() => setViewingRevision(null)}
-          title={`Revision v${viewingRevision.revision_number}`}
-        >
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 text-sm text-gray-500">
-              <span>{viewingRevision.profile?.display_name ?? 'Unknown'}</span>
-              <span>
-                {format(new Date(viewingRevision.created_at), 'MMM d, yyyy h:mm a')}
-              </span>
-            </div>
-            {viewingRevision.change_summary && (
-              <p className="text-sm text-gray-700">
-                {viewingRevision.change_summary}
+      <Dialog
+        open={!!viewingRevision}
+        onOpenChange={(open) => {
+          if (!open) setViewingRevision(null);
+        }}
+      >
+        {viewingRevision && (
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>
+                Revision v{viewingRevision.revision_number}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span>
+                  {viewingRevision.profile?.display_name ?? 'Unknown'}
+                </span>
+                <span>
+                  {format(
+                    new Date(viewingRevision.created_at),
+                    'MMM d, yyyy h:mm a',
+                  )}
+                </span>
+              </div>
+              {viewingRevision.change_summary && (
+                <p className="text-sm text-foreground">
+                  {viewingRevision.change_summary}
+                </p>
+              )}
+              <ScrollArea className="max-h-96 rounded-lg bg-muted p-3">
+                <pre className="whitespace-pre-wrap text-xs text-foreground/80">
+                  {JSON.stringify(viewingRevision.snapshot, null, 2)}
+                </pre>
+              </ScrollArea>
+              <p className="text-xs text-muted-foreground">
+                Hash: {viewingRevision.content_hash}
               </p>
-            )}
-            <div className="max-h-96 overflow-auto rounded-md bg-gray-50 p-3">
-              <pre className="whitespace-pre-wrap text-xs text-gray-700">
-                {JSON.stringify(viewingRevision.snapshot, null, 2)}
-              </pre>
             </div>
-            <p className="text-xs text-gray-400">
-              Hash: {viewingRevision.content_hash}
-            </p>
-          </div>
-        </Dialog>
-      )}
+            <DialogFooter showCloseButton />
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }

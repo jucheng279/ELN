@@ -4,14 +4,23 @@ import { Clock } from 'lucide-react';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
-import EmptyState from '@/components/common/EmptyState';
+import PageHeader from '@/components/eln/PageHeader';
+import EmptyState from '@/components/eln/EmptyState';
 import type { Experiment, ExperimentFilters } from '@/lib/types';
 
 export default function RecentPage() {
   const navigate = useNavigate();
   const { currentWorkspace } = useWorkspaceStore();
-  const { experiments, loading, filters, fetchExperiments, toggleFavorite, archiveExperiment, setFilters } =
-    useExperimentStore();
+  const {
+    experiments,
+    loading,
+    filters,
+    fetchExperiments,
+    toggleFavorite,
+    archiveExperiment,
+    duplicateExperiment,
+    setFilters,
+  } = useExperimentStore();
 
   const wsId = currentWorkspace?.id;
 
@@ -40,10 +49,11 @@ export default function RecentPage() {
   function handleRowAction(action: string, exp: Experiment) {
     switch (action) {
       case 'view':
-        navigate(`/app/experiments/${exp.id}`);
-        break;
       case 'edit':
         navigate(`/app/experiments/${exp.id}`);
+        break;
+      case 'duplicate':
+        duplicateExperiment(exp.id);
         break;
       case 'archive':
         archiveExperiment(exp.id);
@@ -53,16 +63,16 @@ export default function RecentPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="border-b border-gray-200 px-6 py-3">
-        <h1 className="text-base font-semibold text-gray-900">Recent</h1>
-        <p className="mt-0.5 text-xs text-gray-500">
-          Recently modified experiments
-        </p>
+      <div className="border-b px-6 py-3">
+        <PageHeader
+          title="Recent"
+          description="Recently modified experiments"
+        />
       </div>
 
       <div className="flex-1 overflow-auto">
         {loading && recentExperiments.length === 0 ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading…</div>
+          <div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>
         ) : recentExperiments.length === 0 ? (
           <EmptyState
             icon={Clock}

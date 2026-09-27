@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, Loader2 } from 'lucide-react';
 import { useNotebookStore } from '@/stores/notebookStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
 export default function CreateNotebookPage() {
   const navigate = useNavigate();
@@ -33,36 +35,47 @@ export default function CreateNotebookPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
-          <BookOpen size={20} className="text-blue-600" />
+    <div className={cn('mx-auto max-w-lg p-6')}>
+      <div className={cn('mb-6 flex items-center gap-3')}>
+        <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg bg-muted')}>
+          <BookOpen className={cn('h-5 w-5 text-muted-foreground')} />
         </div>
-        <h1 className="text-xl font-semibold text-gray-900">Create Notebook</h1>
+        <h1 className={cn('text-lg font-semibold text-foreground')}>Create Notebook</h1>
       </div>
 
       {error && (
-        <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className={cn('mb-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive')}>{error}</div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          label="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Cell Biology Q4 2026"
-          required
-          autoFocus
-        />
-        <Input
-          label="Description (optional)"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What will this notebook be used for?"
-        />
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={() => navigate(-1 as any)}>Cancel</Button>
-          <Button type="submit" loading={loading} disabled={!name.trim()}>
+      <form onSubmit={handleSubmit} className={cn('space-y-4')}>
+        <div>
+          <Label htmlFor="nb-name">Name</Label>
+          <Input
+            id="nb-name"
+            className={cn('mt-1 h-8')}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Cell Biology Q4 2026"
+            required
+            autoFocus
+          />
+        </div>
+        <div>
+          <Label htmlFor="nb-desc">Description (optional)</Label>
+          <Input
+            id="nb-desc"
+            className={cn('mt-1 h-8')}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What will this notebook be used for?"
+          />
+        </div>
+        <div className={cn('flex justify-end gap-2 pt-2')}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(-1 as any)} type="button">
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={!name.trim() || loading}>
+            {loading && <Loader2 className={cn('mr-1.5 h-3.5 w-3.5 animate-spin')} />}
             Create Notebook
           </Button>
         </div>

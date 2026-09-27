@@ -7,10 +7,23 @@ import DetailsPanel from '@/components/experiments/panels/DetailsPanel';
 import CommentsPanel from '@/components/experiments/panels/CommentsPanel';
 import HistoryPanel from '@/components/experiments/panels/HistoryPanel';
 import ReviewPanel from '@/components/experiments/panels/ReviewPanel';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import {
+  Sheet,
+  SheetTrigger,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
 import {
   Loader2,
-  Check,
-  Clock,
+  Lock,
   PanelRightOpen,
   PanelRightClose,
   MessageSquare,
@@ -18,10 +31,15 @@ import {
   FileCheck,
   Info,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 type SidebarTab = 'details' | 'comments' | 'history' | 'review';
 
-const SIDEBAR_TABS: { id: SidebarTab; label: string; icon: React.ElementType }[] = [
+const SIDEBAR_TABS: {
+  id: SidebarTab;
+  label: string;
+  icon: React.ElementType;
+}[] = [
   { id: 'details', label: 'Details', icon: Info },
   { id: 'comments', label: 'Comments', icon: MessageSquare },
   { id: 'history', label: 'History', icon: History },
@@ -30,16 +48,12 @@ const SIDEBAR_TABS: { id: SidebarTab; label: string; icon: React.ElementType }[]
 
 export default function ExperimentPage() {
   const { id } = useParams<{ id: string }>();
-  const {
-    currentExperiment,
-    saving,
-    lastSaved,
-    loading,
-    fetchExperiment,
-  } = useExperimentStore();
+  const { currentExperiment, saving, lastSaved, loading, fetchExperiment } =
+    useExperimentStore();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<SidebarTab>('details');
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -54,39 +68,91 @@ export default function ExperimentPage() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (!currentExperiment) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-500">
-        <Info className="h-10 w-10 text-gray-300" />
-        <p className="text-lg font-medium">Experiment not found</p>
-        <p className="text-sm">The experiment you're looking for doesn't exist or you don't have access.</p>
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+        <Info className="h-10 w-10 text-muted-foreground/40" />
+        <p className="text-lg font-medium text-foreground">
+          Experiment not found
+        </p>
+        <p className="text-sm">
+          The experiment you&apos;re looking for doesn&apos;t exist or you
+          don&apos;t have access.
+        </p>
       </div>
     );
   }
 
   const readOnly = !!currentExperiment.is_locked;
 
+  const sidebarContent = (
+    <Tabs
+      value={activeTab}
+      onValueChange={(val) => setActiveTab(val as SidebarTab)}
+      className="flex h-full flex-col"
+    >
+      <TabsList variant="line" className="w-full shrink-0 border-b px-1">
+        {SIDEBAR_TABS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <TabsTrigger
+              key={tab.id}
+              value={tab.id}
+              className="gap-1.5 text-xs"
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {tab.label}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+      <TabsContent value="details" className="flex-1 overflow-y-auto">
+        <DetailsPanel />
+      </TabsContent>
+      <TabsContent value="comments" className="flex-1 overflow-hidden">
+        <CommentsPanel />
+      </TabsContent>
+      <TabsContent value="history" className="flex-1 overflow-hidden">
+        <HistoryPanel />
+      </TabsContent>
+      <TabsContent value="review" className="flex-1 overflow-hidden">
+        <ReviewPanel />
+      </TabsContent>
+    </Tabs>
+  );
+
   return (
     <div className="flex h-full flex-col">
       {/* Locked banner */}
       {currentExperiment.is_locked && (
-        <div className="flex items-center gap-2 bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800">
-          <Clock className="h-4 w-4 shrink-0" />
+        <div
+          className={cn(
+            'flex items-center gap-2 border-b px-4 py-2 text-sm',
+            'bg-amber-50 border-amber-200 text-amber-800',
+            'dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300'
+          )}
+        >
+          <Lock className="h-4 w-4 shrink-0" />
           <span>This experiment is locked and cannot be edited.</span>
         </div>
       )}
 
-      {/* Header */}
-      <ExperimentHeader experiment={currentExperiment} readOnly={readOnly} />
+      {/* Header (save status is now inline) */}
+      <ExperimentHeader
+        experiment={currentExperiment}
+        readOnly={readOnly}
+        saving={saving}
+        lastSaved={lastSaved}
+      />
 
       {/* Main content + sidebar */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Main content area */}
+        {/* Editor area */}
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-8 py-6">
             <BlockEditor
@@ -96,74 +162,66 @@ export default function ExperimentPage() {
           </div>
         </div>
 
-        {/* Sidebar toggle */}
-        <button
-          onClick={toggleSidebar}
-          className="flex items-center self-start p-2 text-gray-400 hover:text-gray-600"
-          title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
-        >
-          {sidebarOpen ? (
-            <PanelRightClose className="h-5 w-5" />
-          ) : (
-            <PanelRightOpen className="h-5 w-5" />
-          )}
-        </button>
+        {/* Desktop sidebar toggle */}
+        <div className="hidden md:flex">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="mt-2 mr-1"
+                  onClick={toggleSidebar}
+                />
+              }
+            >
+              {sidebarOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              {sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
 
-        {/* Right sidebar */}
+        {/* Desktop sidebar */}
         {sidebarOpen && (
-          <div className="flex w-80 shrink-0 flex-col border-l border-gray-200 bg-white">
-            {/* Sidebar tabs */}
-            <div className="flex border-b border-gray-200">
-              {SIDEBAR_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-xs font-medium transition-colors ${
-                      isActive
-                        ? 'border-b-2 border-blue-600 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Sidebar content */}
-            <div className="flex-1 overflow-y-auto">
-              {activeTab === 'details' && <DetailsPanel />}
-              {activeTab === 'comments' && <CommentsPanel />}
-              {activeTab === 'history' && <HistoryPanel />}
-              {activeTab === 'review' && <ReviewPanel />}
-            </div>
+          <div
+            className={cn(
+              'hidden md:flex w-[340px] shrink-0 flex-col border-l bg-background'
+            )}
+          >
+            {sidebarContent}
           </div>
         )}
-      </div>
 
-      {/* Save status indicator */}
-      <div className="fixed bottom-4 left-4 z-50">
-        <div className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium shadow-md border border-gray-200">
-          {saving ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
-              <span className="text-gray-500">Saving...</span>
-            </>
-          ) : lastSaved ? (
-            <>
-              <Check className="h-3.5 w-3.5 text-green-500" />
-              <span className="text-gray-500">Saved</span>
-            </>
-          ) : (
-            <>
-              <Clock className="h-3.5 w-3.5 text-amber-500" />
-              <span className="text-amber-600">Unsaved changes</span>
-            </>
-          )}
+        {/* Mobile sidebar trigger + Sheet */}
+        <div className="fixed bottom-4 right-4 z-40 md:hidden">
+          <Sheet open={mobileSheetOpen} onOpenChange={setMobileSheetOpen}>
+            <SheetTrigger
+              render={
+                <Button
+                  size="icon"
+                  className="h-10 w-10 rounded-lg shadow-lg"
+                />
+              }
+            >
+              <PanelRightOpen className="h-5 w-5" />
+            </SheetTrigger>
+            <SheetContent
+              side="right"
+              className="w-[340px] p-0"
+              showCloseButton
+            >
+              <SheetHeader className="sr-only">
+                <SheetTitle>Experiment sidebar</SheetTitle>
+              </SheetHeader>
+              {sidebarContent}
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
     </div>

@@ -5,14 +5,16 @@ import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
-import EmptyState from '@/components/common/EmptyState';
-import Button from '@/components/common/Button';
+import PageHeader from '@/components/eln/PageHeader';
+import EmptyState from '@/components/eln/EmptyState';
+import { Button } from '@/components/ui/button';
 
 export default function MyExperimentsPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { currentWorkspace } = useWorkspaceStore();
-  const { experiments, loading, fetchExperiments } = useExperimentStore();
+  const { experiments, loading, fetchExperiments, toggleFavorite, archiveExperiment, duplicateExperiment } =
+    useExperimentStore();
 
   useEffect(() => {
     if (currentWorkspace && user) {
@@ -30,37 +32,60 @@ export default function MyExperimentsPage() {
     }
   }, [currentWorkspace, user, fetchExperiments]);
 
+  const myExperiments = experiments.filter((e) => !e.is_archived);
+
+  function handleRowClick(exp: { id: string }) {
+    navigate(`/app/experiments/${exp.id}`);
+  }
+
+  function handleRowAction(action: string, exp: { id: string }) {
+    switch (action) {
+      case 'view':
+      case 'edit':
+        navigate(`/app/experiments/${exp.id}`);
+        break;
+      case 'duplicate':
+        duplicateExperiment(exp.id);
+        break;
+      case 'archive':
+        archiveExperiment(exp.id);
+        break;
+    }
+  }
+
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">My Experiments</h1>
-          <p className="mt-1 text-sm text-gray-500">Experiments you created</p>
-        </div>
+    <div className="h-full flex flex-col">
+      <div className="border-b px-6 py-3">
+        <PageHeader
+          title="My Experiments"
+          description="Experiments you created"
+        />
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
-        </div>
-      ) : experiments.length === 0 ? (
-        <EmptyState
-          icon={FlaskRound}
-          title="No experiments yet"
-          description="Experiments you create will appear here."
-          action={
-            <Button onClick={() => navigate('/app')}>
-              <Plus size={16} className="mr-1.5" />
-              Create experiment
-            </Button>
-          }
-        />
-      ) : (
-        <ExperimentTable
-          experiments={experiments}
-          onRowClick={(exp) => navigate(`/app/experiments/${exp.id}`)}
-        />
-      )}
+      <div className="flex-1 overflow-auto">
+        {loading && myExperiments.length === 0 ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : myExperiments.length === 0 ? (
+          <EmptyState
+            icon={FlaskRound}
+            title="No experiments yet"
+            description="Experiments you create will appear here."
+            action={
+              <Button size="sm" onClick={() => navigate('/app')}>
+                <Plus size={15} />
+                Create experiment
+              </Button>
+            }
+          />
+        ) : (
+          <ExperimentTable
+            experiments={myExperiments}
+            onRowClick={handleRowClick}
+            onRowAction={handleRowAction}
+            onToggleFavorite={(id) => toggleFavorite(id)}
+          />
+        )}
+      </div>
     </div>
   );
 }

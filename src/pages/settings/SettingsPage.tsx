@@ -1,22 +1,43 @@
 import { useState, useEffect } from 'react';
 import {
-  Building2,
   Mail,
-  UserCog,
   Trash2,
-  ChevronDown,
   Clock,
   Lock,
   Save,
   Plus,
+  Loader2,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { supabase } from '@/lib/supabase';
 import type { WorkspaceMemberRole, WorkspaceInvitation } from '@/lib/types';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
-import Tabs from '@/components/common/Tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 
 // ── Constants ────────────────────────────────────
 
@@ -44,11 +65,6 @@ const TIMEZONES = [
   'Asia/Singapore',
   'Australia/Sydney',
   'Pacific/Auckland',
-];
-
-const SETTINGS_TABS = [
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'account', label: 'Account' },
 ];
 
 // ── Component ────────────────────────────────────
@@ -85,6 +101,9 @@ export default function SettingsPage() {
   const [timezone, setTimezone] = useState('UTC');
   const [savingAccount, setSavingAccount] = useState(false);
   const [accountSaved, setAccountSaved] = useState(false);
+
+  // Remove member confirmation
+  const [removeMemberId, setRemoveMemberId] = useState<string | null>(null);
 
   // Determine current user role
   const currentMember = members.find((m) => m.user_id === user?.id);
@@ -172,128 +191,144 @@ export default function SettingsPage() {
     }
   };
 
+  const handleConfirmRemove = async () => {
+    if (!removeMemberId) return;
+    await removeMember(removeMemberId);
+    setRemoveMemberId(null);
+  };
+
   return (
-    <div className="flex-1 overflow-auto bg-white">
-      <div className="mx-auto max-w-3xl px-6 py-6">
-        <h1 className="text-lg font-semibold text-gray-900">Settings</h1>
+    <div className={cn('flex-1 overflow-auto bg-background')}>
+      <div className={cn('mx-auto max-w-3xl px-6 py-6')}>
+        <h1 className={cn('text-lg font-semibold text-foreground')}>Settings</h1>
 
-        <div className="mt-4">
-          <Tabs tabs={SETTINGS_TABS} activeTab={activeTab} onChange={setActiveTab} />
-        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className={cn('mt-4')}>
+          <TabsList>
+            <TabsTrigger value="workspace">Workspace</TabsTrigger>
+            <TabsTrigger value="account">Account</TabsTrigger>
+          </TabsList>
 
-        {/* ─── Workspace Tab ─────────────────────── */}
-        {activeTab === 'workspace' && (
-          <div className="mt-6 space-y-8">
+          {/* ─── Workspace Tab ─────────────────────── */}
+          <TabsContent value="workspace" className={cn('mt-6 space-y-6')}>
             {/* Workspace info */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-900">
+              <h2 className={cn('text-sm font-semibold text-foreground')}>
                 Workspace details
               </h2>
-              <div className="mt-3 space-y-3">
+              <div className={cn('mt-3 space-y-3')}>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Name
-                  </label>
-                  <input
-                    type="text"
+                  <Label htmlFor="ws-name">Name</Label>
+                  <Input
+                    id="ws-name"
+                    className={cn('mt-1 h-8 max-w-md')}
                     value={workspaceName}
                     onChange={(e) => setWorkspaceName(e.target.value)}
                     disabled={!isAdmin}
-                    className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Description
-                  </label>
-                  <textarea
+                  <Label htmlFor="ws-desc">Description</Label>
+                  <Textarea
+                    id="ws-desc"
+                    className={cn('mt-1 max-w-md resize-none')}
                     value={workspaceDescription}
                     onChange={(e) => setWorkspaceDescription(e.target.value)}
                     disabled={!isAdmin}
                     rows={2}
-                    className="w-full max-w-md resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
                   />
                 </div>
                 {isAdmin && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    loading={savingWorkspace}
-                    icon={<Save size={14} />}
-                    onClick={handleSaveWorkspace}
-                  >
+                  <Button size="sm" disabled={savingWorkspace} onClick={handleSaveWorkspace}>
+                    {savingWorkspace ? (
+                      <Loader2 className={cn('mr-1.5 h-3.5 w-3.5 animate-spin')} />
+                    ) : (
+                      <Save className={cn('mr-1.5 h-3.5 w-3.5')} />
+                    )}
                     Save changes
                   </Button>
                 )}
               </div>
             </section>
 
+            <Separator />
+
             {/* Members */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-900">Members</h2>
-              <div className="mt-3 overflow-hidden rounded-lg border border-gray-200">
-                <table className="w-full text-sm">
+              <h2 className={cn('text-sm font-semibold text-foreground')}>Members</h2>
+              <div className={cn('mt-3 overflow-hidden rounded-lg border border-border')}>
+                <table className={cn('w-full text-sm')}>
                   <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">
+                    <tr className={cn('border-b border-border bg-muted/50')}>
+                      <th className={cn('px-4 py-2 text-left font-medium text-muted-foreground')}>
                         Name
                       </th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">
+                      <th className={cn('px-4 py-2 text-left font-medium text-muted-foreground')}>
                         Email
                       </th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">
+                      <th className={cn('px-4 py-2 text-left font-medium text-muted-foreground')}>
                         Role
                       </th>
                       {isAdmin && (
-                        <th className="px-4 py-2 text-right font-medium text-gray-500">
+                        <th className={cn('px-4 py-2 text-right font-medium text-muted-foreground')}>
                           Actions
                         </th>
                       )}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className={cn('divide-y divide-border')}>
                     {members.map((member) => (
                       <tr key={member.id}>
-                        <td className="px-4 py-2.5 text-gray-900">
-                          {member.profile?.display_name ?? '—'}
+                        <td className={cn('px-4 py-2.5')}>
+                          <div className={cn('flex items-center gap-2')}>
+                            <Avatar size="sm">
+                              <AvatarFallback>
+                                {member.profile?.display_name?.charAt(0)?.toUpperCase() ?? '?'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className={cn('text-foreground')}>
+                              {member.profile?.display_name ?? '—'}
+                            </span>
+                          </div>
                         </td>
-                        <td className="px-4 py-2.5 text-gray-500">
+                        <td className={cn('px-4 py-2.5 text-muted-foreground')}>
                           {member.profile?.email ?? '—'}
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className={cn('px-4 py-2.5')}>
                           {isAdmin && member.role !== 'owner' ? (
-                            <select
+                            <Select
                               value={member.role}
-                              onChange={(e) =>
-                                updateMemberRole(
-                                  member.id,
-                                  e.target.value as WorkspaceMemberRole,
-                                )
+                              onValueChange={(val) =>
+                                updateMemberRole(member.id, val as WorkspaceMemberRole)
                               }
-                              className="rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-500 focus:outline-none"
                             >
-                              {ROLE_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger size="sm" className={cn('w-28')}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {ROLE_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           ) : (
-                            <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium capitalize text-gray-600">
+                            <Badge variant="secondary" className={cn('capitalize')}>
                               {member.role}
-                            </span>
+                            </Badge>
                           )}
                         </td>
                         {isAdmin && (
-                          <td className="px-4 py-2.5 text-right">
+                          <td className={cn('px-4 py-2.5 text-right')}>
                             {member.role !== 'owner' && member.user_id !== user?.id && (
-                              <button
-                                onClick={() => removeMember(member.id)}
-                                className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                                title="Remove member"
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => setRemoveMemberId(member.id)}
+                                className={cn('text-muted-foreground hover:text-destructive')}
                               >
-                                <Trash2 size={14} />
-                              </button>
+                                <Trash2 className={cn('h-3.5 w-3.5')} />
+                              </Button>
                             )}
                           </td>
                         )}
@@ -304,196 +339,229 @@ export default function SettingsPage() {
               </div>
             </section>
 
+            <Separator />
+
             {/* Invite section */}
             {isAdmin && (
               <section>
-                <h2 className="text-sm font-semibold text-gray-900">
+                <h2 className={cn('text-sm font-semibold text-foreground')}>
                   Invite member
                 </h2>
-                <div className="mt-3 flex items-end gap-3">
-                  <div className="flex-1 max-w-xs">
-                    <label className="mb-1 block text-xs font-medium text-gray-500">
+                <div className={cn('mt-3 flex items-end gap-3')}>
+                  <div className={cn('max-w-xs flex-1')}>
+                    <Label htmlFor="invite-email" className={cn('text-xs')}>
                       Email
-                    </label>
-                    <input
+                    </Label>
+                    <Input
+                      id="invite-email"
                       type="email"
+                      className={cn('mt-1 h-8')}
                       value={inviteEmail}
                       onChange={(e) => setInviteEmail(e.target.value)}
                       placeholder="colleague@example.com"
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">
-                      Role
-                    </label>
-                    <select
-                      value={inviteRole}
-                      onChange={(e) =>
-                        setInviteRole(e.target.value as WorkspaceMemberRole)
-                      }
-                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    >
-                      {ROLE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                    <Label className={cn('text-xs')}>Role</Label>
+                    <div className={cn('mt-1')}>
+                      <Select
+                        value={inviteRole}
+                        onValueChange={(val) => setInviteRole(val as WorkspaceMemberRole)}
+                      >
+                        <SelectTrigger className={cn('w-28')}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ROLE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <Button
-                    variant="primary"
-                    size="md"
-                    loading={inviting}
-                    icon={<Plus size={14} />}
-                    onClick={handleInvite}
-                  >
+                  <Button size="sm" disabled={inviting} onClick={handleInvite}>
+                    {inviting ? (
+                      <Loader2 className={cn('mr-1.5 h-3.5 w-3.5 animate-spin')} />
+                    ) : (
+                      <Plus className={cn('mr-1.5 h-3.5 w-3.5')} />
+                    )}
                     Send invite
                   </Button>
                 </div>
                 {inviteError && (
-                  <p className="mt-2 text-sm text-red-600">{inviteError}</p>
+                  <p className={cn('mt-2 text-sm text-destructive')}>{inviteError}</p>
                 )}
               </section>
             )}
 
             {/* Pending invitations */}
             {isAdmin && invitations.length > 0 && (
-              <section>
-                <h2 className="text-sm font-semibold text-gray-900">
-                  Pending invitations
-                </h2>
-                <div className="mt-3 space-y-2">
-                  {invitations.map((inv) => (
-                    <div
-                      key={inv.id}
-                      className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-2.5"
-                    >
-                      <div>
-                        <p className="text-sm text-gray-900">{inv.email}</p>
-                        <p className="text-xs text-gray-500">
-                          Invited as{' '}
-                          <span className="capitalize">{inv.role}</span> ·
-                          Expires{' '}
-                          {new Date(inv.expires_at).toLocaleDateString()}
-                        </p>
-                        <div className="mt-1 flex items-center gap-1">
-                          <input
-                            readOnly
-                            value={`${window.location.origin}/invite?token=${inv.token}`}
-                            className="w-64 rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500 focus:outline-none"
-                            onClick={(e) => (e.target as HTMLInputElement).select()}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(`${window.location.origin}/invite?token=${inv.token}`);
-                            }}
-                            className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleRevokeInvitation(inv.id)}
-                        className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                        title="Revoke invitation"
+              <>
+                <Separator />
+                <section>
+                  <h2 className={cn('text-sm font-semibold text-foreground')}>
+                    Pending invitations
+                  </h2>
+                  <div className={cn('mt-3 space-y-2')}>
+                    {invitations.map((inv) => (
+                      <div
+                        key={inv.id}
+                        className={cn(
+                          'flex items-center justify-between rounded-lg border border-border px-4 py-2.5'
+                        )}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                        <div>
+                          <p className={cn('text-sm text-foreground')}>{inv.email}</p>
+                          <p className={cn('text-xs text-muted-foreground')}>
+                            Invited as{' '}
+                            <span className={cn('capitalize')}>{inv.role}</span> ·
+                            Expires{' '}
+                            {new Date(inv.expires_at).toLocaleDateString()}
+                          </p>
+                          <div className={cn('mt-1 flex items-center gap-1')}>
+                            <Input
+                              readOnly
+                              value={`${window.location.origin}/invite?token=${inv.token}`}
+                              className={cn('h-6 w-64 bg-muted text-xs text-muted-foreground')}
+                              onClick={(e) => (e.target as HTMLInputElement).select()}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  `${window.location.origin}/invite?token=${inv.token}`
+                                );
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => handleRevokeInvitation(inv.id)}
+                          className={cn('text-muted-foreground hover:text-destructive')}
+                        >
+                          <Trash2 className={cn('h-3.5 w-3.5')} />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </>
             )}
-          </div>
-        )}
+          </TabsContent>
 
-        {/* ─── Account Tab ───────────────────────── */}
-        {activeTab === 'account' && (
-          <div className="mt-6 space-y-8">
+          {/* ─── Account Tab ───────────────────────── */}
+          <TabsContent value="account" className={cn('mt-6 space-y-6')}>
             {/* Profile info */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-900">Profile</h2>
-              <div className="mt-3 space-y-3">
+              <h2 className={cn('text-sm font-semibold text-foreground')}>Profile</h2>
+              <div className={cn('mt-3 space-y-3')}>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Display name
-                  </label>
-                  <input
-                    type="text"
+                  <Label htmlFor="display-name">Display name</Label>
+                  <Input
+                    id="display-name"
+                    className={cn('mt-1 h-8 max-w-md')}
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Email
-                  </label>
-                  <input
+                  <Label htmlFor="profile-email">Email</Label>
+                  <Input
+                    id="profile-email"
                     type="email"
+                    className={cn('mt-1 h-8 max-w-md')}
                     value={profile?.email ?? ''}
                     readOnly
-                    className="w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500"
+                    disabled
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Timezone
-                  </label>
-                  <select
-                    value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
-                    className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {TIMEZONES.map((tz) => (
-                      <option key={tz} value={tz}>
-                        {tz.replace(/_/g, ' ')}
-                      </option>
-                    ))}
-                  </select>
+                  <Label htmlFor="profile-tz">Timezone</Label>
+                  <div className={cn('mt-1')}>
+                    <Select value={timezone} onValueChange={(v) => v !== null && setTimezone(v)}>
+                      <SelectTrigger className={cn('w-full max-w-md')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEZONES.map((tz) => (
+                          <SelectItem key={tz} value={tz}>
+                            {tz.replace(/_/g, ' ')}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    loading={savingAccount}
-                    icon={<Save size={14} />}
-                    onClick={handleSaveAccount}
-                  >
+                <div className={cn('flex items-center gap-3')}>
+                  <Button size="sm" disabled={savingAccount} onClick={handleSaveAccount}>
+                    {savingAccount ? (
+                      <Loader2 className={cn('mr-1.5 h-3.5 w-3.5 animate-spin')} />
+                    ) : (
+                      <Save className={cn('mr-1.5 h-3.5 w-3.5')} />
+                    )}
                     Save changes
                   </Button>
                   {accountSaved && (
-                    <span className="text-sm text-green-600">Saved!</span>
+                    <span className={cn('text-sm text-green-600')}>Saved!</span>
                   )}
                 </div>
               </div>
             </section>
 
+            <Separator />
+
             {/* Change password */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-900">
+              <h2 className={cn('text-sm font-semibold text-foreground')}>
                 Change password
               </h2>
-              <p className="mt-1 text-sm text-gray-500">
+              <p className={cn('mt-1 text-sm text-muted-foreground')}>
                 Use the password reset flow to change your password.
               </p>
-              <div className="mt-3">
+              <div className={cn('mt-3')}>
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   size="sm"
-                  icon={<Lock size={14} />}
-                  onClick={() => window.location.href = '/forgot-password'}
+                  onClick={() => { window.location.href = '/forgot-password'; }}
                 >
+                  <Lock className={cn('mr-1.5 h-3.5 w-3.5')} />
                   Reset password
                 </Button>
               </div>
             </section>
-          </div>
-        )}
+          </TabsContent>
+        </Tabs>
       </div>
+
+      {/* Remove member confirmation */}
+      <AlertDialog
+        open={removeMemberId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveMemberId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove member</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove this member from the workspace? They will lose access immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={handleConfirmRemove}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

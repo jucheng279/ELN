@@ -5,7 +5,6 @@ import {
   SlidersHorizontal,
   X,
   Calendar,
-  ChevronDown,
   FileText,
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -18,9 +17,11 @@ import type {
   WorkspaceMember,
   Tag,
 } from '@/lib/types';
-import Button from '@/components/common/Button';
-import StatusBadge from '@/components/common/StatusBadge';
-import EmptyState from '@/components/common/EmptyState';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
+import EmptyState from '@/components/eln/EmptyState';
+import { cn } from '@/lib/utils';
 
 // ── Constants ────────────────────────────────────
 const DEBOUNCE_MS = 300;
@@ -76,7 +77,7 @@ export default function SearchPage() {
   const [sortBy, setSortBy] = useState<SortOption>('relevance');
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Focus search input on mount
   useEffect(() => {
@@ -207,38 +208,38 @@ export default function SearchPage() {
   };
 
   return (
-    <div className="flex-1 overflow-auto bg-white">
+    <div className="flex-1 overflow-auto bg-background">
       {/* Search header */}
-      <div className="border-b border-gray-200 bg-gray-50">
+      <div className="border-b border-border bg-muted/50">
         <div className="mx-auto max-w-4xl px-6 py-8">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-            <input
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={20} />
+            <Input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search experiments by title, content, or ID..."
-              className="w-full rounded-xl border border-gray-300 bg-white py-3.5 pl-12 pr-12 text-base shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="h-12 rounded-lg pl-12 pr-12 text-base"
             />
             {query && (
               <button
                 onClick={() => setQuery('')}
-                className="absolute right-14 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                className="absolute right-14 top-1/2 -translate-y-1/2 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                <X size={16} />
+                <X className="h-4 w-4" />
               </button>
             )}
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={[
+              className={cn(
                 'absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 transition-colors',
                 showFilters || hasActiveFilters
                   ? 'bg-blue-50 text-blue-600'
-                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-              ].join(' ')}
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
             >
-              <SlidersHorizontal size={18} />
+              <SlidersHorizontal className="h-4.5 w-4.5" />
             </button>
           </div>
         </div>
@@ -248,9 +249,9 @@ export default function SearchPage() {
         <div className="flex gap-6">
           {/* Filters panel */}
           {showFilters && (
-            <div className="w-56 shrink-0 space-y-4 border-r border-gray-100 pr-6">
+            <div className="w-56 shrink-0 space-y-4 border-r border-border/50 pr-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Filters
                 </h3>
                 {hasActiveFilters && (
@@ -265,13 +266,13 @@ export default function SearchPage() {
 
               {/* Notebook filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Notebook
                 </label>
                 <select
                   value={notebookFilter}
                   onChange={(e) => setNotebookFilter(e.target.value)}
-                  className="w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="h-8 w-full rounded-lg border border-border bg-background px-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   <option value="">All notebooks</option>
                   {notebooks.map((nb) => (
@@ -284,13 +285,13 @@ export default function SearchPage() {
 
               {/* Status filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Status
                 </label>
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as ExperimentStatus | '')}
-                  className="w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="h-8 w-full rounded-lg border border-border bg-background px-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {STATUS_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -302,13 +303,13 @@ export default function SearchPage() {
 
               {/* Author filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Author
                 </label>
                 <select
                   value={authorFilter}
                   onChange={(e) => setAuthorFilter(e.target.value)}
-                  className="w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="h-8 w-full rounded-lg border border-border bg-background px-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   <option value="">All authors</option>
                   {members.map((m) => (
@@ -321,27 +322,27 @@ export default function SearchPage() {
 
               {/* Date range */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Date range
                 </label>
                 <div className="space-y-1.5">
                   <div className="relative">
-                    <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
                     <input
                       type="date"
                       value={dateFrom}
                       onChange={(e) => setDateFrom(e.target.value)}
-                      className="w-full rounded-md border border-gray-200 py-1.5 pl-7 pr-2.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="h-8 w-full rounded-lg border border-border bg-background py-1.5 pl-7 pr-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                       placeholder="From"
                     />
                   </div>
                   <div className="relative">
-                    <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
                     <input
                       type="date"
                       value={dateTo}
                       onChange={(e) => setDateTo(e.target.value)}
-                      className="w-full rounded-md border border-gray-200 py-1.5 pl-7 pr-2.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="h-8 w-full rounded-lg border border-border bg-background py-1.5 pl-7 pr-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                       placeholder="To"
                     />
                   </div>
@@ -351,7 +352,7 @@ export default function SearchPage() {
               {/* Tags */}
               {tags.length > 0 && (
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-gray-500">
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
                     Tags
                   </label>
                   <div className="flex flex-wrap gap-1.5">
@@ -359,12 +360,12 @@ export default function SearchPage() {
                       <button
                         key={tag.id}
                         onClick={() => toggleTag(tag.id)}
-                        className={[
+                        className={cn(
                           'rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
                           selectedTags.includes(tag.id)
                             ? 'bg-blue-100 text-blue-700'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
-                        ].join(' ')}
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                        )}
                       >
                         {tag.name}
                       </button>
@@ -380,21 +381,25 @@ export default function SearchPage() {
             {/* Results header */}
             {hasSearched && (
               <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   {loading ? 'Searching...' : `${totalCount} result${totalCount !== 1 ? 's' : ''}`}
                 </p>
                 <div className="flex items-center gap-1.5 text-sm">
-                  <span className="text-gray-400">Sort by</span>
+                  <span className="text-muted-foreground">Sort by</span>
                   <button
                     onClick={() => setSortBy('relevance')}
-                    className={sortBy === 'relevance' ? 'font-medium text-gray-900' : 'text-gray-500 hover:text-gray-700'}
+                    className={cn(
+                      sortBy === 'relevance' ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )}
                   >
                     Relevance
                   </button>
-                  <span className="text-gray-300">|</span>
+                  <span className="text-border">|</span>
                   <button
                     onClick={() => setSortBy('date')}
-                    className={sortBy === 'date' ? 'font-medium text-gray-900' : 'text-gray-500 hover:text-gray-700'}
+                    className={cn(
+                      sortBy === 'date' ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )}
                   >
                     Date
                   </button>
@@ -426,28 +431,28 @@ export default function SearchPage() {
 
             {/* Results list */}
             {results.length > 0 && (
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-border/50">
                 {results.map((exp) => (
                   <button
                     key={exp.id}
                     onClick={() => navigate(`/app/experiments/${exp.id}`)}
-                    className="block w-full px-3 py-3 text-left transition-colors hover:bg-gray-50"
+                    className="block w-full px-3 py-3 text-left transition-colors hover:bg-muted/50"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500">
+                          <span className="shrink-0 rounded-lg bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                             {exp.experiment_id}
                           </span>
-                          <StatusBadge status={exp.status} />
+                          <ExperimentStatusBadge status={exp.status} />
                         </div>
                         <h3
-                          className="mt-1 truncate text-sm font-medium text-gray-900"
+                          className="mt-1 truncate text-sm font-medium text-foreground"
                           dangerouslySetInnerHTML={{
                             __html: highlightSnippet(exp.title, debouncedQuery),
                           }}
                         />
-                        <div className="mt-1 flex items-center gap-3 text-xs text-gray-500">
+                        <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
                           {exp.notebook && <span>{exp.notebook.name}</span>}
                           {exp.created_by_profile && (
                             <span>{exp.created_by_profile.display_name}</span>
@@ -467,13 +472,13 @@ export default function SearchPage() {
             {loading && (
               <div className="space-y-3 py-2">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="animate-pulse px-3 py-3">
+                  <div key={i} className="px-3 py-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-4 w-16 rounded bg-gray-200" />
-                      <div className="h-4 w-14 rounded-full bg-gray-200" />
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-14 rounded-full" />
                     </div>
-                    <div className="mt-2 h-4 w-3/4 rounded bg-gray-200" />
-                    <div className="mt-1.5 h-3 w-1/2 rounded bg-gray-100" />
+                    <Skeleton className="mt-2 h-4 w-3/4" />
+                    <Skeleton className="mt-1.5 h-3 w-1/2" />
                   </div>
                 ))}
               </div>

@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, User } from 'lucide-react';
+import { Loader2, Check } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import AuthLayout from '@/components/layout/AuthLayout';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -54,25 +56,17 @@ export default function SignUpPage() {
   if (success) {
     return (
       <AuthLayout>
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-50">
-            <svg
-              className="h-6 w-6 text-green-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-            </svg>
+        <div className="rounded-lg border bg-card p-6 shadow-sm text-center">
+          <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-lg border bg-muted">
+            <Check size={20} className="text-foreground" />
           </div>
-          <h1 className="text-lg font-semibold text-gray-900">Account created</h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <h1 className="text-lg font-semibold text-foreground">Account created</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             Check your email for a confirmation link, then sign in.
           </p>
           <Link
             to="/login"
-            className="mt-4 inline-block text-sm font-medium text-blue-600 hover:text-blue-700"
+            className="mt-4 inline-block text-sm font-medium text-foreground hover:underline"
           >
             Go to sign in
           </Link>
@@ -83,73 +77,82 @@ export default function SignUpPage() {
 
   return (
     <AuthLayout>
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-semibold text-gray-900">Create your account</h1>
-        <p className="mt-1 text-sm text-gray-500">
+      <div className="rounded-lg border bg-card p-6 shadow-sm">
+        <h1 className="text-lg font-semibold text-foreground">Create your account</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Get started with LabNote in seconds.
         </p>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <p className="mt-4 text-sm text-destructive">{error}</p>
         )}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <Input
-            label="Display name"
-            type="text"
-            required
-            placeholder="Jane Smith"
-            autoComplete="name"
-            icon={<User size={16} />}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="display-name">Display name</Label>
+            <Input
+              id="display-name"
+              type="text"
+              required
+              placeholder="Jane Smith"
+              autoComplete="name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </div>
 
-          <Input
-            label="Email"
-            type="email"
-            required
-            placeholder="you@example.com"
-            autoComplete="email"
-            icon={<Mail size={16} />}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              required
+              placeholder="you@example.com"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
 
-          <Input
-            label="Password"
-            type="password"
-            required
-            placeholder="••••••••"
-            autoComplete="new-password"
-            helperText="Must be at least 8 characters"
-            icon={<Lock size={16} />}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              placeholder="••••••••"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">Must be at least 8 characters</p>
+          </div>
 
-          <Input
-            label="Confirm password"
-            type="password"
-            required
-            placeholder="••••••••"
-            autoComplete="new-password"
-            icon={<Lock size={16} />}
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-password">Confirm password</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              required
+              placeholder="••••••••"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </div>
 
-          <Button type="submit" fullWidth loading={loading}>
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading && <Loader2 className="animate-spin" />}
             Create account
           </Button>
         </form>
       </div>
 
-      <p className="mt-6 text-center text-sm text-gray-500">
+      <Separator className="my-6" />
+
+      <p className="text-center text-sm text-muted-foreground">
         Already have an account?{' '}
-        <Link to="/login" className="font-medium text-blue-600 hover:text-blue-700">
+        <Link to="/login" className="font-medium text-foreground hover:underline">
           Sign in
         </Link>
       </p>

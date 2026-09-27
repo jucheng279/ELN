@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, ArrowLeft } from 'lucide-react';
+import { Mail, ArrowLeft, Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import AuthLayout from '@/components/layout/AuthLayout';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function ForgotPasswordPage() {
   const resetPassword = useAuthStore((s) => s.resetPassword);
@@ -31,20 +32,21 @@ export default function ForgotPasswordPage() {
 
   return (
     <AuthLayout>
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+      <div className="rounded-lg border bg-card p-6 shadow-sm">
         {sent ? (
           <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50">
-              <Mail size={22} className="text-blue-600" />
+            <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-lg border bg-muted">
+              <Mail size={20} className="text-foreground" />
             </div>
-            <h1 className="text-lg font-semibold text-gray-900">Check your email</h1>
-            <p className="mt-2 text-sm text-gray-500">
-              If an account exists for <span className="font-medium text-gray-700">{email}</span>,
-              you'll receive a password reset link shortly.
+            <h1 className="text-lg font-semibold text-foreground">Check your email</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              If an account exists for{' '}
+              <span className="font-medium text-foreground">{email}</span>, you'll
+              receive a password reset link shortly.
             </p>
             <Link
               to="/login"
-              className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700"
+              className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:underline"
             >
               <ArrowLeft size={14} />
               Back to sign in
@@ -52,30 +54,31 @@ export default function ForgotPasswordPage() {
           </div>
         ) : (
           <>
-            <h1 className="text-lg font-semibold text-gray-900">Reset your password</h1>
-            <p className="mt-1 text-sm text-gray-500">
+            <h1 className="text-lg font-semibold text-foreground">Reset your password</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Enter your email and we'll send you a reset link.
             </p>
 
             {error && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
-              </div>
+              <p className="mt-4 text-sm text-destructive">{error}</p>
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-              <Input
-                label="Email"
-                type="email"
-                required
-                placeholder="you@example.com"
-                autoComplete="email"
-                icon={<Mail size={16} />}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  required
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
 
-              <Button type="submit" fullWidth loading={loading}>
+              <Button type="submit" size="lg" className="w-full" disabled={loading}>
+                {loading && <Loader2 className="animate-spin" />}
                 Send reset link
               </Button>
             </form>
@@ -83,7 +86,7 @@ export default function ForgotPasswordPage() {
             <div className="mt-4 text-center">
               <Link
                 to="/login"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700"
+                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
               >
                 <ArrowLeft size={14} />
                 Back to sign in

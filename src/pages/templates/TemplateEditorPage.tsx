@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -7,15 +7,25 @@ import {
   GripVertical,
   Save,
   Upload,
-  ChevronDown,
-  ChevronUp,
   Clock,
   Check,
+  Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
-import Tabs from '@/components/common/Tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import type { Template, TemplateVersion, BlockType } from '@/lib/types';
 
 interface BlockDefinition {
@@ -42,10 +52,10 @@ const BLOCK_TYPES: { value: BlockType; label: string }[] = [
   { value: 'code', label: 'Code' },
 ];
 
-const versionStatusStyle: Record<string, { bg: string; text: string }> = {
-  draft: { bg: 'bg-gray-100', text: 'text-gray-600' },
-  published: { bg: 'bg-green-50', text: 'text-green-700' },
-  superseded: { bg: 'bg-gray-100', text: 'text-gray-500' },
+const versionStatusConfig: Record<string, { className: string }> = {
+  draft: { className: 'bg-muted text-muted-foreground border-transparent' },
+  published: { className: 'bg-green-50 text-green-700 border-green-200' },
+  superseded: { className: 'bg-muted text-muted-foreground/70 border-transparent' },
 };
 
 function generateId() {
@@ -288,7 +298,7 @@ export default function TemplateEditorPage() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-sm text-gray-400">
+      <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
         Loading template…
       </div>
     );
@@ -296,49 +306,52 @@ export default function TemplateEditorPage() {
 
   if (!template) {
     return (
-      <div className="h-full flex items-center justify-center text-sm text-gray-400">
+      <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
         Template not found
       </div>
     );
   }
 
   const selectedVersion = versions.find((v) => v.id === selectedVersionId);
+  const templateStatusCfg = versionStatusConfig[template.status] ?? versionStatusConfig.draft;
 
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-6 py-3">
+      <div className="flex items-center justify-between border-b border-border px-6 py-3">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/app/templates')}
-            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+            className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft className="h-4.5 w-4.5" />
           </button>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="text-base font-semibold text-gray-900 bg-transparent border-none outline-none focus:ring-0 p-0"
+            className="text-base font-semibold text-foreground bg-transparent border-none outline-none focus:ring-0 p-0"
             placeholder="Template name"
           />
         </div>
         <div className="flex items-center gap-2">
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
-            icon={<Save size={14} />}
-            loading={saving}
+            className="h-8"
+            disabled={saving}
             onClick={handleSaveDraft}
           >
+            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
             Save Draft
           </Button>
           <Button
             size="sm"
-            icon={<Upload size={14} />}
-            loading={publishing}
+            className="h-8"
+            disabled={publishing}
             onClick={handlePublish}
           >
+            {publishing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1.5" />}
             Publish Version
           </Button>
         </div>
@@ -349,200 +362,190 @@ export default function TemplateEditorPage() {
         {/* Main editor */}
         <div className="flex-1 overflow-auto">
           {/* Meta fields */}
-          <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+          <div className="px-6 py-4 border-b border-border/50 space-y-3">
             <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Category"
-                placeholder="e.g., Biology"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              />
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Status
-                </label>
-                <div className="py-2">
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                      (versionStatusStyle[template.status] ?? versionStatusStyle.draft).bg
-                    } ${(versionStatusStyle[template.status] ?? versionStatusStyle.draft).text}`}
-                  >
+              <div className="space-y-1.5">
+                <Label htmlFor="tpl-category">Category</Label>
+                <Input
+                  id="tpl-category"
+                  placeholder="e.g., Biology"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <div className="py-1.5">
+                  <Badge variant="outline" className={cn('text-[11px] font-medium px-1.5 py-0', templateStatusCfg.className)}>
                     {template.status.charAt(0).toUpperCase() + template.status.slice(1)}
-                  </span>
+                  </Badge>
                 </div>
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Description
-              </label>
-              <textarea
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-desc">Description</Label>
+              <Textarea
+                id="tpl-desc"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe what this template is for…"
                 rows={2}
-                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               />
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="px-6">
-            <Tabs
-              tabs={[
-                { id: 'blocks', label: 'Block Definitions', count: blocks.length },
-              ]}
-              activeTab={activeTab}
-              onChange={setActiveTab}
-            />
-          </div>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="px-6">
+            <TabsList className="mt-3">
+              <TabsTrigger value="blocks">
+                Block Definitions
+                {blocks.length > 0 && (
+                  <span className="ml-1.5 text-xs text-muted-foreground">({blocks.length})</span>
+                )}
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Blocks editor */}
-          <div className="px-6 py-4 space-y-2">
-            {blocks.length === 0 && (
-              <div className="text-center py-8 text-sm text-gray-400">
-                No blocks defined. Add blocks to define your template structure.
-              </div>
-            )}
-
-            {blocks.map((block, idx) => (
-              <div
-                key={block.id}
-                draggable
-                onDragStart={() => setDragIndex(idx)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (dragIndex !== null && dragIndex !== idx) {
-                    moveBlock(dragIndex, idx);
-                    setDragIndex(idx);
-                  }
-                }}
-                onDragEnd={() => setDragIndex(null)}
-                className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white p-3 hover:border-gray-300 transition-colors"
-              >
-                <div className="cursor-grab pt-1 text-gray-300 hover:text-gray-500">
-                  <GripVertical size={16} />
+            <TabsContent value="blocks" className="py-4 space-y-2">
+              {blocks.length === 0 && (
+                <div className="text-center py-8 text-sm text-muted-foreground">
+                  No blocks defined. Add blocks to define your template structure.
                 </div>
+              )}
 
-                <div className="flex-1 grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">
-                      Type
-                    </label>
-                    <select
-                      value={block.type}
-                      onChange={(e) =>
-                        updateBlock(idx, { type: e.target.value as BlockType })
-                      }
-                      className="block w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                    >
-                      {BLOCK_TYPES.map((bt) => (
-                        <option key={bt.value} value={bt.value}>
-                          {bt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">
-                      Label
-                    </label>
-                    <input
-                      type="text"
-                      value={block.label}
-                      onChange={(e) => updateBlock(idx, { label: e.target.value })}
-                      placeholder="Section label"
-                      className="block w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">
-                      Default Content
-                    </label>
-                    <input
-                      type="text"
-                      value={
-                        typeof block.defaultContent === 'string'
-                          ? block.defaultContent
-                          : block.defaultContent
-                            ? JSON.stringify(block.defaultContent)
-                            : ''
-                      }
-                      onChange={(e) =>
-                        updateBlock(idx, { defaultContent: e.target.value || null })
-                      }
-                      placeholder="Optional default"
-                      className="block w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => removeBlock(idx)}
-                  className="rounded-md p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors mt-5"
+              {blocks.map((block, idx) => (
+                <div
+                  key={block.id}
+                  draggable
+                  onDragStart={() => setDragIndex(idx)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragIndex !== null && dragIndex !== idx) {
+                      moveBlock(dragIndex, idx);
+                      setDragIndex(idx);
+                    }
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                  className="flex items-start gap-2 rounded-lg border border-border bg-background p-3 hover:border-border/80 transition-colors"
                 >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            ))}
+                  <div className="cursor-grab pt-1 text-muted-foreground/40 hover:text-muted-foreground">
+                    <GripVertical className="h-4 w-4" />
+                  </div>
 
-            <button
-              onClick={addBlock}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/30 transition-colors"
-            >
-              <Plus size={15} />
-              Add Block
-            </button>
-          </div>
+                  <div className="flex-1 grid grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Type</Label>
+                      <Select
+                        value={block.type}
+                        onValueChange={(val) => updateBlock(idx, { type: val as BlockType })}
+                      >
+                        <SelectTrigger className="h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BLOCK_TYPES.map((bt) => (
+                            <SelectItem key={bt.value} value={bt.value}>
+                              {bt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Label</Label>
+                      <Input
+                        value={block.label}
+                        onChange={(e) => updateBlock(idx, { label: e.target.value })}
+                        placeholder="Section label"
+                        className="h-8"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Default Content</Label>
+                      <Input
+                        value={
+                          typeof block.defaultContent === 'string'
+                            ? block.defaultContent
+                            : block.defaultContent
+                              ? JSON.stringify(block.defaultContent)
+                              : ''
+                        }
+                        onChange={(e) =>
+                          updateBlock(idx, { defaultContent: e.target.value || null })
+                        }
+                        placeholder="Optional default"
+                        className="h-8"
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 mt-4"
+                    onClick={() => removeBlock(idx)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+
+              <button
+                onClick={addBlock}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2.5 text-sm text-muted-foreground hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/30 transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                Add Block
+              </button>
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* Version sidebar */}
-        <div className="w-64 shrink-0 border-l border-gray-200 bg-gray-50/50 overflow-auto">
-          <div className="px-4 py-3 border-b border-gray-200">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">
+        <div className="w-64 shrink-0 border-l border-border bg-muted/30 overflow-auto">
+          <div className="px-4 py-3 border-b border-border">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Versions
             </h3>
           </div>
           <div className="p-2 space-y-1">
             {versions.length === 0 && (
-              <p className="px-2 py-4 text-xs text-gray-400 text-center">
+              <p className="px-2 py-4 text-xs text-muted-foreground text-center">
                 No versions yet. Save a draft to create v1.
               </p>
             )}
             {versions.map((ver) => {
               const isSelected = ver.id === selectedVersionId;
-              const st = versionStatusStyle[ver.status] ?? versionStatusStyle.draft;
+              const st = versionStatusConfig[ver.status] ?? versionStatusConfig.draft;
               return (
                 <button
                   key={ver.id}
                   onClick={() => handleVersionSelect(ver.id)}
-                  className={[
-                    'w-full flex items-center gap-2 rounded-md px-3 py-2 text-left transition-colors',
+                  className={cn(
+                    'w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors',
                     isSelected
                       ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-700 hover:bg-gray-100',
-                  ].join(' ')}
+                      : 'text-foreground hover:bg-muted',
+                  )}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-medium">
                         v{ver.version_number}
                       </span>
-                      <span
-                        className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${st.bg} ${st.text}`}
-                      >
+                      <Badge variant="outline" className={cn('text-[10px] font-medium px-1 py-0', st.className)}>
                         {ver.status}
-                      </span>
+                      </Badge>
                     </div>
-                    <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                      <Clock size={10} />
+                    <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                      <Clock className="h-2.5 w-2.5" />
                       {new Date(ver.created_at).toLocaleDateString()}
                     </div>
                   </div>
                   {ver.status === 'published' && (
-                    <Check size={14} className="text-green-600 shrink-0" />
+                    <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
                   )}
                 </button>
               );

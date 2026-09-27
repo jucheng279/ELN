@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import AuthLayout from '@/components/layout/AuthLayout';
-import Button from '@/components/common/Button';
-import Input from '@/components/common/Input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -32,59 +34,64 @@ export default function LoginPage() {
 
   return (
     <AuthLayout>
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-semibold text-gray-900">Sign in to your account</h1>
-        <p className="mt-1 text-sm text-gray-500">
+      <div className="rounded-lg border bg-card p-6 shadow-sm">
+        <h1 className="text-lg font-semibold text-foreground">Sign in to your account</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Welcome back. Enter your credentials to continue.
         </p>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <p className="mt-4 text-sm text-destructive">{error}</p>
         )}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <Input
-            label="Email"
-            type="email"
-            required
-            placeholder="you@example.com"
-            autoComplete="email"
-            icon={<Mail size={16} />}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              required
+              placeholder="you@example.com"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
 
-          <Input
-            label="Password"
-            type="password"
-            required
-            placeholder="••••••••"
-            autoComplete="current-password"
-            icon={<Lock size={16} />}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              placeholder="••••••••"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
 
           <div className="flex justify-end">
             <Link
               to="/forgot-password"
-              className="text-sm font-medium text-blue-600 hover:text-blue-700"
+              className="text-sm text-muted-foreground hover:text-foreground"
             >
               Forgot password?
             </Link>
           </div>
 
-          <Button type="submit" fullWidth loading={loading}>
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading && <Loader2 className="animate-spin" />}
             Sign in
           </Button>
         </form>
       </div>
 
-      <p className="mt-6 text-center text-sm text-gray-500">
+      <Separator className="my-6" />
+
+      <p className="text-center text-sm text-muted-foreground">
         Don&apos;t have an account?{' '}
-        <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-700">
+        <Link to="/signup" className="font-medium text-foreground hover:underline">
           Create one
         </Link>
       </p>

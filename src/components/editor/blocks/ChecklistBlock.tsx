@@ -1,14 +1,10 @@
-import { useState, useCallback, useRef, KeyboardEvent } from 'react';
+import { useCallback, useRef, KeyboardEvent } from 'react';
 import { Plus } from 'lucide-react';
-
-interface ChecklistItem {
-  text: string;
-  checked: boolean;
-}
+import type { ChecklistContent, ChecklistItem } from '@/lib/types';
 
 interface ChecklistBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: ChecklistContent;
+  onUpdate: (content: ChecklistContent) => void;
   readOnly: boolean;
 }
 

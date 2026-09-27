@@ -116,11 +116,14 @@ export default function ProtocolEditorPage() {
     const params = version.parameters;
     if (params && typeof params === 'object') {
       const entries: ParameterEntry[] = Object.entries(params).map(
-        ([key, val]: [string, any]) => ({
-          name: key,
-          value: String(val?.value ?? val ?? ''),
-          unit: String(val?.unit ?? ''),
-        }),
+        ([key, val]: [string, unknown]) => {
+          const v = val as Record<string, unknown> | undefined;
+          return {
+            name: key,
+            value: String(v?.value ?? val ?? ''),
+            unit: String(v?.unit ?? ''),
+          };
+        },
       );
       setParameters(entries);
     } else {
@@ -202,10 +205,10 @@ export default function ProtocolEditorPage() {
     );
   }
 
-  function serializeParameters(): Record<string, any> | null {
+  function serializeParameters(): Record<string, { value: string; unit: string }> | null {
     const valid = parameters.filter((p) => p.name.trim());
     if (valid.length === 0) return null;
-    const obj: Record<string, any> = {};
+    const obj: Record<string, { value: string; unit: string }> = {};
     valid.forEach((p) => {
       obj[p.name.trim()] = { value: p.value, unit: p.unit };
     });
@@ -344,7 +347,6 @@ export default function ProtocolEditorPage() {
     );
   }
 
-  const selectedVersion = versions.find((v) => v.id === selectedVersionId);
   const protocolStatusCfg = versionStatusConfig[protocol.status] ?? versionStatusConfig.draft;
 
   return (

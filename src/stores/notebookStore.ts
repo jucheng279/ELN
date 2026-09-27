@@ -18,7 +18,7 @@ interface NotebookActions {
   createFolder: (notebookId: string, name: string, parentId?: string) => Promise<Folder>;
 }
 
-export const useNotebookStore = create<NotebookState & NotebookActions>((set, get) => ({
+export const useNotebookStore = create<NotebookState & NotebookActions>((set) => ({
   notebooks: [],
   currentNotebook: null,
   folders: [],

@@ -1,6 +1,24 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Experiment, ExperimentBlock } from '@/lib/types';
+import type {
+  Experiment,
+  ExperimentBlock,
+  HeadingContent,
+  ParagraphContent,
+  ResultContent,
+  ListContent,
+  ChecklistContent,
+  ParameterBlockContent,
+  TableContent,
+  ImageContent,
+  AttachmentContent,
+  ProtocolBlockContent,
+  CalloutContent,
+  ReferenceContent,
+  RelatedExperimentContent,
+  CodeContent,
+  ProtocolDevBlockEntry,
+} from '@/lib/types';
 import { format } from 'date-fns';
 
 function stripHtml(html: string): string {
@@ -108,7 +126,7 @@ export async function exportExperimentPdf(
     },
   });
 
-  y = (doc as any).lastAutoTable.finalY + 8;
+  y = (doc as unknown as Record<string, { finalY: number }>).lastAutoTable.finalY + 8;
 
   // Divider
   doc.setDrawColor(200);
@@ -119,16 +137,15 @@ export async function exportExperimentPdf(
   const sortedBlocks = [...blocks].sort((a, b) => a.order_key.localeCompare(b.order_key));
 
   for (const block of sortedBlocks) {
-    const content = block.content || {};
-
     switch (block.type) {
       case 'heading': {
+        const c = block.content as HeadingContent;
         checkSpace(12);
-        const level = content.level || 2;
+        const level = c.level || 2;
         const sizes: Record<number, number> = { 1: 16, 2: 14, 3: 12 };
         doc.setFontSize(sizes[level] || 12);
         doc.setTextColor(20);
-        const text = stripHtml(content.html || '');
+        const text = stripHtml(c.html || '');
         if (text) {
           const lines = doc.splitTextToSize(text, contentWidth);
           doc.text(lines, margin, y);
@@ -137,15 +154,32 @@ export async function exportExperimentPdf(
         break;
       }
 
-      case 'paragraph':
-      case 'result': {
-        const text = stripHtml(content.html || '');
+      case 'paragraph': {
+        const c = block.content as ParagraphContent;
+        const text = stripHtml(c.html || '');
         if (!text) break;
         checkSpace(10);
-        if (block.type === 'result' && content.label) {
+        doc.setFontSize(10);
+        doc.setTextColor(50);
+        const lines = doc.splitTextToSize(text, contentWidth);
+        for (const line of lines) {
+          checkSpace(5);
+          doc.text(line, margin, y);
+          y += 5;
+        }
+        y += 3;
+        break;
+      }
+
+      case 'result': {
+        const c = block.content as ResultContent;
+        const text = stripHtml(c.html || '');
+        if (!text) break;
+        checkSpace(10);
+        if (c.label) {
           doc.setFontSize(11);
           doc.setTextColor(20, 120, 20);
-          doc.text(content.label, margin, y);
+          doc.text(c.label, margin, y);
           y += 6;
         }
         doc.setFontSize(10);
@@ -161,8 +195,9 @@ export async function exportExperimentPdf(
       }
 
       case 'list': {
-        const items: string[] = content.items || [];
-        const isNumbered = content.type === 'numbered';
+        const c = block.content as ListContent;
+        const items: string[] = c.items || [];
+        const isNumbered = c.type === 'numbered';
         doc.setFontSize(10);
         doc.setTextColor(50);
         for (let i = 0; i < items.length; i++) {
@@ -177,7 +212,8 @@ export async function exportExperimentPdf(
       }
 
       case 'checklist': {
-        const items: Array<{ text: string; checked: boolean }> = content.items || [];
+        const c = block.content as ChecklistContent;
+        const items = c.items || [];
         doc.setFontSize(10);
         doc.setTextColor(50);
         for (const item of items) {
@@ -191,7 +227,8 @@ export async function exportExperimentPdf(
       }
 
       case 'parameters': {
-        const params: Array<{ name: string; value: string; unit: string; description?: string }> = content.parameters || [];
+        const c = block.content as ParameterBlockContent;
+        const params = c.parameters || [];
         if (params.length === 0) break;
         checkSpace(10);
         doc.setFontSize(11);
@@ -208,47 +245,49 @@ export async function exportExperimentPdf(
           styles: { fontSize: 9, cellPadding: 2 },
           headStyles: { fillColor: [240, 240, 240], textColor: [60, 60, 60], fontStyle: 'bold' },
         });
-        y = (doc as any).lastAutoTable.finalY + 6;
+        y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
         break;
       }
 
       case 'table': {
-        const cols: Array<{ name: string }> = content.columns || [];
-        const rows: string[][] = content.rows || [];
+        const c = block.content as TableContent;
+        const cols = c.columns || [];
+        const tRows: string[][] = c.rows || [];
         if (cols.length === 0) break;
         checkSpace(10);
 
-        if (content.caption) {
+        if (c.caption) {
           doc.setFontSize(9);
           doc.setTextColor(100);
-          doc.text(content.caption, margin, y);
+          doc.text(c.caption, margin, y);
           y += 5;
         }
 
         autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
-          head: [cols.map(c => c.name)],
-          body: rows,
+          head: [cols.map(col => col.name)],
+          body: tRows,
           theme: 'grid',
           styles: { fontSize: 8, cellPadding: 2 },
           headStyles: { fillColor: [240, 240, 240], textColor: [60, 60, 60], fontStyle: 'bold' },
         });
-        y = (doc as any).lastAutoTable.finalY + 6;
+        y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
         break;
       }
 
       case 'image': {
-        if (!content.url) break;
+        const c = block.content as ImageContent;
+        if (!c.url) break;
         checkSpace(60);
         try {
           const imgWidth = Math.min(contentWidth, 140);
-          doc.addImage(content.url, 'JPEG', margin, y, imgWidth, imgWidth * 0.6);
+          doc.addImage(c.url, 'JPEG', margin, y, imgWidth, imgWidth * 0.6);
           y += imgWidth * 0.6 + 3;
-          if (content.caption) {
+          if (c.caption) {
             doc.setFontSize(8);
             doc.setTextColor(100);
-            doc.text(content.caption, margin, y);
+            doc.text(c.caption, margin, y);
             y += 5;
           }
         } catch {
@@ -262,16 +301,17 @@ export async function exportExperimentPdf(
       }
 
       case 'attachment': {
-        if (!content.filename) break;
+        const c = block.content as AttachmentContent;
+        if (!c.filename) break;
         checkSpace(8);
         doc.setFontSize(9);
         doc.setTextColor(80);
-        doc.text(`\u{1F4CE} ${content.displayName || content.filename}`, margin + 4, y);
+        doc.text(`\u{1F4CE} ${c.displayName || c.filename}`, margin + 4, y);
         y += 5;
-        if (content.caption) {
+        if (c.caption) {
           doc.setFontSize(8);
           doc.setTextColor(120);
-          doc.text(content.caption, margin + 8, y);
+          doc.text(c.caption, margin + 8, y);
           y += 4;
         }
         y += 2;
@@ -279,17 +319,18 @@ export async function exportExperimentPdf(
       }
 
       case 'protocol': {
+        const c = block.content as ProtocolBlockContent;
         checkSpace(15);
         doc.setFontSize(11);
         doc.setTextColor(20);
         doc.text(
-          `Protocol: ${content.protocol_name || 'Protocol'} (v${content.version_number || '?'})`,
+          `Protocol: ${c.protocol_name || 'Protocol'} (v${c.version_number || '?'})`,
           margin, y
         );
         y += 7;
 
-        const steps = content.steps || [];
-        const deviations = content.deviations || [];
+        const steps = c.steps || [];
+        const deviations: ProtocolDevBlockEntry[] = c.deviations || [];
         for (let i = 0; i < steps.length; i++) {
           checkSpace(12);
           doc.setFontSize(9);
@@ -306,7 +347,7 @@ export async function exportExperimentPdf(
             y += 4;
           }
 
-          const dev = deviations.find((d: any) => d.step_index === i);
+          const dev = deviations.find((d) => d.step_index === i);
           if (dev) {
             doc.setFontSize(8);
             doc.setTextColor(180, 100, 0);
@@ -323,13 +364,14 @@ export async function exportExperimentPdf(
       }
 
       case 'callout': {
-        const text = stripHtml(content.html || '');
+        const c = block.content as CalloutContent;
+        const text = stripHtml(c.html || '');
         if (!text) break;
         checkSpace(10);
         const typeLabels: Record<string, string> = { note: 'Note', warning: 'Warning', tip: 'Tip', danger: 'Important' };
         doc.setFontSize(9);
         doc.setTextColor(100);
-        doc.text(`[${typeLabels[content.type] || 'Note'}]`, margin, y);
+        doc.text(`[${typeLabels[c.type] || 'Note'}]`, margin, y);
         y += 5;
         doc.setFontSize(10);
         doc.setTextColor(60);
@@ -340,14 +382,15 @@ export async function exportExperimentPdf(
       }
 
       case 'reference': {
+        const c = block.content as ReferenceContent;
         checkSpace(10);
         doc.setFontSize(9);
         doc.setTextColor(60);
         let refText = '';
-        if (content.citation) refText = content.citation;
-        else if (content.title) refText = content.title;
-        if (content.doi) refText += ` DOI: ${content.doi}`;
-        if (content.url && !content.doi) refText += ` ${content.url}`;
+        if (c.citation) refText = c.citation;
+        else if (c.title) refText = c.title;
+        if (c.doi) refText += ` DOI: ${c.doi}`;
+        if (c.url && !c.doi) refText += ` ${c.url}`;
         if (refText) {
           const lines = doc.splitTextToSize(refText, contentWidth);
           doc.text(lines, margin + 4, y);
@@ -357,11 +400,12 @@ export async function exportExperimentPdf(
       }
 
       case 'related_experiment': {
+        const c = block.content as RelatedExperimentContent;
         checkSpace(6);
         doc.setFontSize(9);
         doc.setTextColor(60);
         doc.text(
-          `Related: ${content.experiment_display_id || ''} \u2014 ${content.title || ''}`,
+          `Related: ${c.experiment_display_id || ''} \u2014 ${c.title || ''}`,
           margin + 4, y
         );
         y += 6;
@@ -369,7 +413,8 @@ export async function exportExperimentPdf(
       }
 
       case 'code': {
-        const code = content.code || '';
+        const c = block.content as CodeContent;
+        const code = c.code || '';
         if (!code) break;
         checkSpace(10);
         doc.setFontSize(8);

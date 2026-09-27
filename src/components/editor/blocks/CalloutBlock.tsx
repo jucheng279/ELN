@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Info, AlertTriangle, Lightbulb, AlertOctagon, LucideIcon } from 'lucide-react';
+import type { CalloutContent, CalloutType } from '@/lib/types';
 
 interface CalloutBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: CalloutContent;
+  onUpdate: (content: CalloutContent) => void;
   readOnly: boolean;
 }
-
-type CalloutType = 'note' | 'warning' | 'tip' | 'danger';
 
 interface CalloutConfig {
   bg: string;

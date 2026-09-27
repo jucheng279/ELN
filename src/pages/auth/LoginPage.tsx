@@ -6,6 +6,7 @@ import AuthLayout from '@/components/layout/AuthLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+
 import { Separator } from '@/components/ui/separator';
 
 export default function LoginPage() {
@@ -25,8 +26,8 @@ export default function LoginPage() {
     try {
       await signIn(email, password);
       navigate('/workspaces', { replace: true });
-    } catch (err: any) {
-      setError(err?.message ?? 'Unable to sign in. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to sign in. Please try again.');
     } finally {
       setLoading(false);
     }

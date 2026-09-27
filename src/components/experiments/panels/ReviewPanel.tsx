@@ -118,15 +118,15 @@ export default function ReviewPanel() {
   const isReviewer = user?.id === latestReview?.reviewer_id;
   const pendingReview = latestReview?.status === 'pending' ? latestReview : null;
 
-  const runAction = async (fn: () => Promise<any>, successMsg: string, cleanup?: () => void) => {
+  const runAction = async (fn: () => Promise<unknown>, successMsg: string, cleanup?: () => void) => {
     setSubmitting(true);
     try {
       await fn();
       toast.success(successMsg);
       cleanup?.();
       await fetchReviewData();
-    } catch (err: any) {
-      toast.error(err?.message || 'Action failed');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Action failed');
     } finally {
       setSubmitting(false);
     }
@@ -185,8 +185,13 @@ export default function ReviewPanel() {
   const handleCreateAmendment = () => {
     if (!amendReason.trim()) return;
     runAction(
-      () => createAmendment(exp.id, amendReason.trim()),
-      'Amendment created',
+      async () => {
+        const result = await createAmendment(exp.id, amendReason.trim());
+        if (result?.id) {
+          window.location.href = `/experiments/${result.id}`;
+        }
+      },
+      'Amendment created — opening new experiment',
       () => { setShowAmendDialog(false); setAmendReason(''); }
     );
   };

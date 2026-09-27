@@ -128,17 +128,28 @@ export default function ExperimentPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Locked banner */}
-      {currentExperiment.is_locked && (
+      {/* Read-only banner */}
+      {readOnly && (
         <div
           className={cn(
             'flex items-center gap-2 border-b px-4 py-2 text-sm',
-            'bg-amber-50 border-amber-200 text-amber-800',
-            'dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300'
+            currentExperiment.is_locked
+              ? 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300'
+              : 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300'
           )}
         >
           <Lock className="h-4 w-4 shrink-0" />
-          <span>This experiment is locked and cannot be edited.</span>
+          <span>
+            {currentExperiment.is_locked
+              ? 'This experiment is locked and cannot be edited.'
+              : currentExperiment.status === 'in_review'
+                ? 'This experiment is under review. Editing is disabled until the review is complete.'
+                : currentExperiment.status === 'approved'
+                  ? 'This experiment is approved and awaiting signature.'
+                  : currentExperiment.status === 'completed'
+                    ? 'This experiment is completed. Submit for review or reopen to make changes.'
+                    : 'This experiment is not in an editable state.'}
+          </span>
         </div>
       )}
 

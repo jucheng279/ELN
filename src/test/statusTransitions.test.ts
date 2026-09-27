@@ -1,18 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import type { ExperimentStatus } from '@/lib/types';
 
+/**
+ * These transitions match the DB trigger `validate_experiment_status_transition`.
+ * They document the adjacency graph; actual enforcement is in the database.
+ * Domain RPCs further restrict which transitions are allowed (e.g. locked->in_progress
+ * is only valid through a formal amendment, not a direct status write).
+ */
 const VALID_TRANSITIONS: Record<ExperimentStatus, ExperimentStatus[]> = {
   draft: ['in_progress', 'archived'],
   in_progress: ['completed', 'draft', 'archived'],
   completed: ['in_review', 'in_progress', 'archived'],
-  in_review: ['approved', 'changes_requested'],
-  changes_requested: ['in_review', 'in_progress'],
-  approved: ['locked'],
-  locked: ['in_progress'], // via amendment
+  in_review: ['changes_requested', 'approved', 'archived'],
+  changes_requested: ['in_review', 'in_progress', 'archived'],
+  approved: ['locked', 'archived'],
+  locked: ['archived'],
   archived: ['draft'],
 };
 
-describe('experiment status transitions', () => {
+describe('experiment status transitions (adjacency map)', () => {
   const allStatuses: ExperimentStatus[] = [
     'draft', 'in_progress', 'completed', 'in_review',
     'changes_requested', 'approved', 'locked', 'archived',
@@ -35,17 +41,21 @@ describe('experiment status transitions', () => {
     expect(VALID_TRANSITIONS.draft).toEqual(['in_progress', 'archived']);
   });
 
-  it('locked can only transition via amendment (to in_progress)', () => {
-    expect(VALID_TRANSITIONS.locked).toEqual(['in_progress']);
+  it('locked cannot transition to in_progress directly (amendment creates a new experiment)', () => {
+    expect(VALID_TRANSITIONS.locked).not.toContain('in_progress');
   });
 
-  it('approved can only go to locked (via signing)', () => {
-    expect(VALID_TRANSITIONS.approved).toEqual(['locked']);
+  it('approved can go to locked or archived', () => {
+    expect(VALID_TRANSITIONS.approved).toEqual(['locked', 'archived']);
   });
 
   it('in_review cannot go directly to locked or draft', () => {
     expect(VALID_TRANSITIONS.in_review).not.toContain('locked');
     expect(VALID_TRANSITIONS.in_review).not.toContain('draft');
+  });
+
+  it('archived can only restore to draft', () => {
+    expect(VALID_TRANSITIONS.archived).toEqual(['draft']);
   });
 });
 
@@ -57,11 +67,11 @@ describe('notification types alignment', () => {
   ];
 
   const RPC_NOTIFICATION_TYPES = [
-    'review_requested',      // submit_for_review
-    'experiment_approved',   // approve_experiment
-    'changes_requested',     // request_experiment_changes
-    'review_resubmitted',    // resubmit_for_review
-    'experiment_signed',     // sign_and_lock_experiment
+    'review_requested',
+    'experiment_approved',
+    'changes_requested',
+    'review_resubmitted',
+    'experiment_signed',
   ];
 
   it('every RPC notification type is in the valid set', () => {

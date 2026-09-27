@@ -1,17 +1,7 @@
-import { useState, useCallback, useRef, DragEvent, ChangeEvent } from 'react';
+import { useState, useCallback, useRef, useEffect, DragEvent, ChangeEvent } from 'react';
 import { Upload, X, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { uploadFile, replaceFile, archiveAttachment, getSignedUrl } from '@/lib/storage';
-
-interface ImageContent {
-  url: string;
-  caption: string;
-  alt: string;
-  filename: string;
-  fileSize: number;
-  storagePath?: string;
-  attachmentId?: string;
-  versionNumber?: number;
-}
+import type { ImageContent } from '@/lib/types';
 
 interface ImageBlockProps {
   content: ImageContent;
@@ -29,12 +19,12 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, experimentId }: ImageBlockProps) {
-  const { url, caption, alt, filename, fileSize, storagePath, attachmentId } = content;
+  const { caption, alt, filename, fileSize, storagePath, attachmentId } = content;
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resolvedUrl, setResolvedUrl] = useState<string>(url || '');
+  const [resolvedUrl, setResolvedUrl] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resolveUrl = useCallback(async (path: string) => {
@@ -46,12 +36,11 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
     }
   }, []);
 
-  // Resolve URL on mount if we have a storage path but no/expired URL
-  useState(() => {
-    if (storagePath && !url?.startsWith('data:')) {
+  useEffect(() => {
+    if (storagePath) {
       resolveUrl(storagePath);
     }
-  });
+  }, [storagePath, resolveUrl]);
 
   const processFile = useCallback(
     async (file: File) => {
@@ -69,7 +58,6 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
           const signed = await getSignedUrl(result.path);
           onUpdate({
             ...content,
-            url: signed,
             storagePath: result.path,
             filename: file.name,
             fileSize: file.size,
@@ -81,7 +69,6 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
           const signed = await getSignedUrl(result.path);
           onUpdate({
             ...content,
-            url: signed,
             storagePath: result.path,
             attachmentId: result.attachmentId,
             filename: file.name,
@@ -90,8 +77,9 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
           });
           setResolvedUrl(signed);
         }
-      } catch (err: any) {
-        setError(err.message || 'Upload failed');
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Upload failed';
+        setError(message);
       } finally {
         setUploading(false);
       }
@@ -131,13 +119,11 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
     if (attachmentId) {
       await archiveAttachment(attachmentId).catch(() => {});
     }
-    onUpdate({ ...content, url: '', filename: '', fileSize: 0, storagePath: undefined, attachmentId: undefined, versionNumber: undefined });
+    onUpdate({ ...content, filename: '', fileSize: 0, storagePath: undefined, attachmentId: undefined, versionNumber: undefined });
     setResolvedUrl('');
   }, [content, onUpdate, attachmentId]);
 
-  const displayUrl = resolvedUrl || url;
-
-  if (!displayUrl && !storagePath) {
+  if (!resolvedUrl && !storagePath) {
     if (readOnly) {
       return (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-muted-foreground/25 bg-muted/30 p-8">
@@ -179,8 +165,8 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
       >
-        {displayUrl ? (
-          <img src={displayUrl} alt={alt || filename || 'Uploaded image'} className="w-full max-h-[500px] object-contain" onError={() => { if (storagePath) resolveUrl(storagePath); }} />
+        {resolvedUrl ? (
+          <img src={resolvedUrl} alt={alt || filename || 'Uploaded image'} className="w-full max-h-[500px] object-contain" onError={() => { if (storagePath) resolveUrl(storagePath); }} />
         ) : (
           <div className="flex items-center justify-center h-48"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         )}
@@ -199,7 +185,7 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
       </div>
 
-      {filename && <div className="mt-1.5 text-xs text-muted-foreground">{filename} · {formatFileSize(fileSize)}{content.versionNumber && content.versionNumber > 1 ? ` · v${content.versionNumber}` : ''}</div>}
+      {filename && <div className="mt-1.5 text-xs text-muted-foreground">{filename} &middot; {formatFileSize(fileSize)}{content.versionNumber && content.versionNumber > 1 ? ` \u00b7 v${content.versionNumber}` : ''}</div>}
 
       {readOnly ? (
         caption && <p className="mt-2 text-sm text-muted-foreground italic">{caption}</p>

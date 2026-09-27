@@ -1,17 +1,7 @@
 import { useState, useRef } from 'react';
 import { Upload, Download, X, RefreshCw, Loader2 } from 'lucide-react';
 import { uploadFile, replaceFile, archiveAttachment, getSignedUrl } from '@/lib/storage';
-
-interface AttachmentContent {
-  filename: string;
-  displayName: string;
-  mimeType: string;
-  fileSize: number;
-  storagePath: string;
-  attachmentId: string;
-  versionNumber: number;
-  caption: string;
-}
+import type { AttachmentContent } from '@/lib/types';
 
 const DEFAULT_CONTENT: AttachmentContent = {
   filename: '',
@@ -48,8 +38,8 @@ export default function AttachmentBlock({
   workspaceId,
   experimentId,
 }: {
-  block: { content: any };
-  onUpdate: (content: any) => void;
+  block: { content: AttachmentContent };
+  onUpdate: (content: AttachmentContent) => void;
   readOnly: boolean;
   workspaceId?: string;
   experimentId?: string;
@@ -93,8 +83,9 @@ export default function AttachmentBlock({
           versionNumber: 1,
         });
       }
-    } catch (err: any) {
-      setError(err.message || 'Upload failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
     } finally {
       setUploading(false);
     }

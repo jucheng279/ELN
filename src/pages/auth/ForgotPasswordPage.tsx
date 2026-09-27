@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Mail } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import AuthLayout from '@/components/layout/AuthLayout';
 import { Button } from '@/components/ui/button';
@@ -23,8 +23,8 @@ export default function ForgotPasswordPage() {
     try {
       await resetPassword(email);
       setSent(true);
-    } catch (err: any) {
-      setError(err?.message ?? 'Unable to send reset link. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to send reset link. Please try again.');
     } finally {
       setLoading(false);
     }

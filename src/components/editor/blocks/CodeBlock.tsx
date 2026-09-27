@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
+import type { CodeContent } from '@/lib/types';
 
 interface CodeBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: CodeContent;
+  onUpdate: (content: CodeContent) => void;
   readOnly: boolean;
 }
 

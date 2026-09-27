@@ -3,14 +3,14 @@ import { generateKeyBetween } from 'fractional-indexing';
 import { useExperimentStore } from '@/stores/experimentStore';
 import BlockRenderer from '@/components/editor/BlockRenderer';
 import BlockTypeMenu from '@/components/editor/BlockTypeMenu';
-import type { BlockType, ExperimentBlock } from '@/lib/types';
+import type { BlockType, ExperimentBlock, BlockContent } from '@/lib/types';
 import { Plus, GripVertical, Trash2, Copy } from 'lucide-react';
 
 // ──────────────────────────────────────────────
 // Default content factories per block type
 // ──────────────────────────────────────────────
 
-const DEFAULT_CONTENT: Record<BlockType, () => any> = {
+const DEFAULT_CONTENT: Record<BlockType, () => BlockContent> = {
   paragraph: () => ({ html: '' }),
   heading: () => ({ html: '', level: 2 }),
   list: () => ({ type: 'bullet', items: [''] }),
@@ -163,7 +163,7 @@ export default function BlockEditor({ experimentId, workspaceId, readOnly }: Blo
   // ── Update block content ─────────────────────
 
   const handleUpdateBlock = useCallback(
-    (blockId: string) => (content: any) => {
+    (blockId: string) => (content: BlockContent) => {
       updateBlock(blockId, content);
     },
     [updateBlock]
@@ -205,8 +205,6 @@ export default function BlockEditor({ experimentId, workspaceId, readOnly }: Blo
       const blockId = e.dataTransfer.getData('text/plain');
       if (!blockId) return;
 
-      const beforeKey =
-        targetIndex > 0 ? sortedBlocks[targetIndex - 1]?.order_key ?? null : null;
       // If the drop is between two blocks, the "after" block is at targetIndex
       // We need a key between beforeKey and afterKey
       const sourceIndex = sortedBlocks.findIndex((b) => b.id === blockId);

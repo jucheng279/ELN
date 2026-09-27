@@ -19,7 +19,6 @@ import type { CommentThread, Comment, Profile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmptyState from '@/components/eln/EmptyState';
 import { cn } from '@/lib/utils';
@@ -70,6 +69,7 @@ export default function CommentsPanel() {
 
       if (error) throw error;
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sorted = (data ?? []).map((thread: any) => ({
         ...thread,
         comments: (thread.comments ?? []).sort(

@@ -2,6 +2,9 @@
   "name": "scientific-eln",
   "private": true,
   "version": "1.0.0",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -70,7 +73,7 @@
     "jsdom": "^30.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.5.3",
-    "typescript-eslint": "^8.3.0",
+    "typescript-eslint": "^8.70.1",
     "vite": "^6.4.3",
     "vitest": "^5.0.2"
   }

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, Check } from 'lucide-react';
+
 import { useAuthStore } from '@/stores/authStore';
 import AuthLayout from '@/components/layout/AuthLayout';
 import { Button } from '@/components/ui/button';
@@ -46,8 +47,8 @@ export default function SignUpPage() {
       await signUp(email, password, displayName);
       setSuccess(true);
       setTimeout(() => navigate('/login', { replace: true }), 3000);
-    } catch (err: any) {
-      setError(err?.message ?? 'Unable to create account. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to create account. Please try again.');
     } finally {
       setLoading(false);
     }

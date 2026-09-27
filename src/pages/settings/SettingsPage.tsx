@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Mail,
   Trash2,
-  Clock,
   Lock,
   Save,
   Plus,
@@ -165,8 +163,8 @@ export default function SettingsPage() {
       setInviteEmail('');
       setInviteRole('member');
       await fetchInvitations();
-    } catch (err: any) {
-      setInviteError(err?.message ?? 'Failed to send invitation');
+    } catch (err: unknown) {
+      setInviteError(err instanceof Error ? err.message : 'Failed to send invitation');
     } finally {
       setInviting(false);
     }

@@ -32,7 +32,7 @@ interface BlockDefinition {
   id: string;
   type: BlockType;
   label: string;
-  defaultContent: any;
+  defaultContent: unknown;
 }
 
 const BLOCK_TYPES: { value: BlockType; label: string }[] = [
@@ -125,11 +125,11 @@ export default function TemplateEditorPage() {
     const content = version.content;
     if (Array.isArray(content)) {
       setBlocks(
-        content.map((b: any) => ({
+        content.map((b) => ({
           id: b.id || generateId(),
           type: b.type || 'paragraph',
           label: b.label || '',
-          defaultContent: b.defaultContent ?? b.default_content ?? null,
+          defaultContent: b.defaultContent ?? null,
         })),
       );
     } else {
@@ -242,51 +242,52 @@ export default function TemplateEditorPage() {
     if (!id) return;
     setPublishing(true);
     try {
-      const { data: user } = await supabase.auth.getUser();
       const content = serializeBlocks();
-
-      // Supersede all previously published versions
-      await supabase
-        .from('template_versions')
-        .update({ status: 'superseded' })
-        .eq('template_id', id)
-        .eq('status', 'published');
-
-      const nextNum = (versions[0]?.version_number ?? 0) + 1;
-
-      // If current is a draft, promote it
       const currentVersion = versions.find((v) => v.id === selectedVersionId);
+
+      let versionIdToPublish = selectedVersionId;
+
       if (currentVersion && currentVersion.status === 'draft') {
+        // Save latest content to the draft version first
         await supabase
           .from('template_versions')
-          .update({
-            content,
-            status: 'published',
-            published_at: new Date().toISOString(),
-          })
+          .update({ content })
           .eq('id', currentVersion.id);
       } else {
-        await supabase.from('template_versions').insert({
-          template_id: id,
-          version_number: nextNum,
-          content,
-          status: 'published',
-          published_at: new Date().toISOString(),
-          created_by: user.user!.id,
-        });
+        // Create a new draft version, then publish it
+        const { data: user } = await supabase.auth.getUser();
+        const nextNum = (versions[0]?.version_number ?? 0) + 1;
+        const { data: newVer, error: insertErr } = await supabase
+          .from('template_versions')
+          .insert({
+            template_id: id,
+            version_number: nextNum,
+            content,
+            status: 'draft',
+            created_by: user.user!.id,
+          })
+          .select('id')
+          .single();
+        if (insertErr) throw insertErr;
+        versionIdToPublish = newVer.id;
       }
 
-      // Update template
+      // Update template name/description before publish
       await supabase
         .from('templates')
         .update({
           name: name.trim(),
           description: description.trim() || null,
           category: category.trim() || null,
-          current_version: currentVersion?.status === 'draft' ? currentVersion.version_number : nextNum,
-          status: 'published',
         })
         .eq('id', id);
+
+      // Use the server-side RPC for atomic publish
+      const { error: pubErr } = await supabase.rpc('publish_template_version', {
+        p_template_id: id,
+        p_version_id: versionIdToPublish,
+      });
+      if (pubErr) throw pubErr;
 
       await fetchTemplate();
     } catch (err) {
@@ -312,7 +313,6 @@ export default function TemplateEditorPage() {
     );
   }
 
-  const selectedVersion = versions.find((v) => v.id === selectedVersionId);
   const templateStatusCfg = versionStatusConfig[template.status] ?? versionStatusConfig.draft;
 
   return (

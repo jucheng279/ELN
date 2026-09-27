@@ -43,8 +43,8 @@ export default function ResetPasswordPage() {
       if (updateError) throw updateError;
       setSuccess(true);
       setTimeout(() => navigate('/app'), 2000);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to update password');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to update password');
     } finally {
       setLoading(false);
     }

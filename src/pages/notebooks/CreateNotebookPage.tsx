@@ -27,8 +27,8 @@ export default function CreateNotebookPage() {
     try {
       const nb = await createNotebook(currentWorkspace.id, name.trim(), description.trim() || undefined);
       navigate(`/app/notebooks/${nb.id}`);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to create notebook');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create notebook');
     } finally {
       setLoading(false);
     }
@@ -71,7 +71,7 @@ export default function CreateNotebookPage() {
           />
         </div>
         <div className={cn('flex justify-end gap-2 pt-2')}>
-          <Button variant="ghost" size="sm" onClick={() => navigate(-1 as any)} type="button">
+          <Button variant="ghost" size="sm" onClick={() => navigate(-1 as unknown as string)} type="button">
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={!name.trim() || loading}>

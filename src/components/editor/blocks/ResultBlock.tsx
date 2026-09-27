@@ -5,11 +5,7 @@ import Underline from '@tiptap/extension-underline';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import Highlight from '@tiptap/extension-highlight';
-
-interface ResultContent {
-  label: string;
-  html: string;
-}
+import type { ResultContent } from '@/lib/types';
 
 const DEFAULT: ResultContent = { label: 'Results', html: '' };
 
@@ -18,8 +14,8 @@ export default function ResultBlock({
   onUpdate,
   readOnly,
 }: {
-  block: { content: any };
-  onUpdate: (content: any) => void;
+  block: { content: ResultContent };
+  onUpdate: (content: ResultContent) => void;
   readOnly: boolean;
 }) {
   const data: ResultContent = { ...DEFAULT, ...block.content };

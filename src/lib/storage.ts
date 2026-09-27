@@ -31,8 +31,8 @@ export async function uploadFile(
 
   return {
     path,
-    attachmentId: (data as any).attachment_id,
-    versionId: (data as any).version_id,
+    attachmentId: (data as Record<string, unknown>).attachment_id as string,
+    versionId: (data as Record<string, unknown>).version_id as string,
   };
 }
 
@@ -63,8 +63,8 @@ export async function replaceFile(
 
   return {
     path,
-    versionId: (data as any).version_id,
-    versionNumber: (data as any).version_number,
+    versionId: (data as Record<string, unknown>).version_id as string,
+    versionNumber: (data as Record<string, unknown>).version_number as number,
   };
 }
 

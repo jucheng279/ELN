@@ -1,31 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ClipboardList, Clock, Thermometer, AlertTriangle, Check, X, Search, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-
-interface ProtocolStep {
-  step_number: number;
-  instruction: string;
-  duration: string | null;
-  temperature: string | null;
-  notes: string | null;
-  warnings: string | null;
-}
-
-interface Deviation {
-  step_index: number;
-  original_value: string;
-  actual_value: string;
-  reason: string;
-}
-
-interface ProtocolBlockContent {
-  protocol_id: string | null;
-  protocol_version_id: string | null;
-  protocol_name: string;
-  version_number: number;
-  steps: ProtocolStep[];
-  deviations: Deviation[];
-}
+import type { ProtocolBlockContent, ProtocolStep, ProtocolDevBlockEntry } from '@/lib/types';
 
 interface ProtocolBlockProps {
   content: ProtocolBlockContent;
@@ -109,7 +85,7 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
   );
 
   const getDeviationForStep = useCallback(
-    (stepIndex: number): Deviation | undefined => {
+    (stepIndex: number): ProtocolDevBlockEntry | undefined => {
       return content.deviations?.find((d) => d.step_index === stepIndex);
     },
     [content.deviations]
@@ -140,7 +116,7 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
 
     const existingDeviations = content.deviations ?? [];
     const filtered = existingDeviations.filter((d) => d.step_index !== activeDeviationIndex);
-    const newDeviation: Deviation = {
+    const newDeviation: ProtocolDevBlockEntry = {
       step_index: activeDeviationIndex,
       original_value: step.instruction,
       actual_value: deviationForm.actual_value,

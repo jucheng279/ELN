@@ -45,8 +45,8 @@ export default function WorkspaceSelectPage() {
       await selectWorkspace(ws.id);
       setShowCreate(false);
       navigate('/app');
-    } catch (err: any) {
-      setError(err.message || 'Failed to create workspace');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create workspace');
     } finally {
       setCreating(false);
     }

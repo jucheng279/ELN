@@ -37,8 +37,8 @@ export default function ArchivedPage() {
     try {
       await restoreExperiment(exp.id);
       setArchived((prev) => prev.filter((e) => e.id !== exp.id));
-    } catch (err: any) {
-      alert(err.message ?? 'Failed to restore');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to restore');
     }
   }
 

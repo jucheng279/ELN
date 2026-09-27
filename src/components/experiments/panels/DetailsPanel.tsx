@@ -6,7 +6,6 @@ import { useExperimentStore } from '@/stores/experimentStore';
 import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
 import type { ExperimentContributor, ExperimentProtocol } from '@/lib/types';
 
 function DetailRow({

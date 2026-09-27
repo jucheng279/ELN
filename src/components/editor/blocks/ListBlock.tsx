@@ -1,13 +1,12 @@
-import { useState, useCallback, useRef, KeyboardEvent } from 'react';
+import { useCallback, useRef, KeyboardEvent } from 'react';
 import { List, ListOrdered, Plus } from 'lucide-react';
+import type { ListContent, ListType } from '@/lib/types';
 
 interface ListBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: ListContent;
+  onUpdate: (content: ListContent) => void;
   readOnly: boolean;
 }
-
-type ListType = 'bullet' | 'numbered';
 
 export default function ListBlock({
   content,
@@ -115,7 +114,7 @@ export default function ListBlock({
         {items.map((item, index) => (
           <div key={index} className="flex items-center gap-2">
             <span className="w-5 flex-shrink-0 text-right text-sm text-gray-400">
-              {type === 'bullet' ? '•' : `${index + 1}.`}
+              {type === 'bullet' ? '\u2022' : `${index + 1}.`}
             </span>
             <input
               ref={(el) => {

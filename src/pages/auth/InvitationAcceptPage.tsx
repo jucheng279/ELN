@@ -38,9 +38,9 @@ export default function InvitationAcceptPage() {
         p_token: token,
       });
       if (rpcError) throw rpcError;
-      setResult(data as any);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to accept invitation');
+      setResult(data as { workspace_id: string; role?: string; already_member?: boolean });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to accept invitation');
     } finally {
       setLoading(false);
     }

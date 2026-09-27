@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Plus, FlaskRound, Pencil, Archive, Loader2 } from 'lucide-react';
+
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useNotebookStore } from '@/stores/notebookStore';
@@ -90,8 +91,8 @@ export default function NotebookPage() {
     try {
       await updateNotebook(id, { name: editName.trim(), description: editDesc.trim() || undefined });
       setEditing(false);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to update notebook');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to update notebook');
     }
   }, [id, editName, editDesc, updateNotebook]);
 
@@ -100,8 +101,8 @@ export default function NotebookPage() {
     try {
       await archiveNotebook(id);
       navigate('/app');
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to archive notebook');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to archive notebook');
     }
   }, [id, archiveNotebook, navigate]);
 
@@ -111,8 +112,8 @@ export default function NotebookPage() {
     try {
       const exp = await createExperiment(currentWorkspace.id, id, newTitle || undefined);
       navigate(`/app/experiments/${exp.id}`);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to create experiment');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create experiment');
     } finally {
       setCreateLoading(false);
     }

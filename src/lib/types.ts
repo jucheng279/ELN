@@ -101,6 +101,8 @@ export interface Experiment {
   is_archived: boolean;
   template_id: string | null;
   template_version_id: string | null;
+  amended_from_id: string | null;
+  amendment_reason: string | null;
   search_vector: string | null;
   created_at: string;
   updated_at: string;
@@ -131,11 +133,151 @@ export type BlockType =
   | 'related_experiment'
   | 'code';
 
+// ── Block content types ─────────────────────────
+
+export interface ParagraphContent {
+  html: string;
+}
+
+export interface HeadingContent {
+  html: string;
+  level: number;
+}
+
+export type ListType = 'bullet' | 'numbered';
+
+export interface ListContent {
+  type: ListType;
+  items: string[];
+}
+
+export interface ChecklistItem {
+  text: string;
+  checked: boolean;
+}
+
+export interface ChecklistContent {
+  items: ChecklistItem[];
+}
+
+export type CalloutType = 'note' | 'warning' | 'tip' | 'danger';
+
+export interface CalloutContent {
+  type: CalloutType;
+  html: string;
+}
+
+export type DividerContent = Record<string, unknown>;
+
+export interface ParameterEntry {
+  name: string;
+  value: string;
+  unit: string;
+  description: string;
+}
+
+export interface ParameterBlockContent {
+  parameters: ParameterEntry[];
+}
+
+export interface TableColumn {
+  id: string;
+  name: string;
+  type: string;
+  width: number;
+}
+
+export interface TableContent {
+  columns: TableColumn[];
+  rows: string[][];
+  caption: string;
+}
+
+export interface ImageContent {
+  caption: string;
+  alt: string;
+  filename: string;
+  fileSize: number;
+  storagePath?: string;
+  attachmentId?: string;
+  versionNumber?: number;
+  url?: string;
+}
+
+export interface AttachmentContent {
+  filename: string;
+  displayName: string;
+  mimeType: string;
+  fileSize: number;
+  storagePath: string;
+  attachmentId: string;
+  versionNumber: number;
+  caption: string;
+}
+
+export interface CodeContent {
+  code: string;
+  language: string;
+}
+
+export interface ProtocolDevBlockEntry {
+  step_index: number;
+  original_value: string;
+  actual_value: string;
+  reason: string;
+}
+
+export interface ProtocolBlockContent {
+  protocol_id: string | null;
+  protocol_version_id: string | null;
+  protocol_name: string;
+  version_number: number;
+  steps: ProtocolStep[];
+  deviations: ProtocolDevBlockEntry[];
+}
+
+export interface ResultContent {
+  label: string;
+  html: string;
+}
+
+export interface ReferenceContent {
+  doi: string;
+  url: string;
+  title: string;
+  citation: string;
+  notes: string;
+}
+
+export interface RelatedExperimentContent {
+  experiment_id: string | null;
+  experiment_display_id: string;
+  title: string;
+  status: string;
+}
+
+export type BlockContent =
+  | ParagraphContent
+  | HeadingContent
+  | ListContent
+  | ChecklistContent
+  | CalloutContent
+  | DividerContent
+  | ParameterBlockContent
+  | TableContent
+  | ImageContent
+  | AttachmentContent
+  | CodeContent
+  | ProtocolBlockContent
+  | ResultContent
+  | ReferenceContent
+  | RelatedExperimentContent;
+
 export interface ExperimentBlock {
   id: string;
   experiment_id: string;
   type: BlockType;
-  content: any;
+  content: BlockContent;
   order_key: string;
   created_by: string;
   updated_by: string | null;
@@ -146,11 +288,25 @@ export interface ExperimentBlock {
 // ──────────────────────────────────────────────
 // Revisions
 // ──────────────────────────────────────────────
+
+export interface RevisionBlockSnapshot {
+  id: string;
+  type: BlockType;
+  content: BlockContent;
+  order_key: string;
+}
+
+export interface RevisionSnapshot {
+  title: string;
+  status: ExperimentStatus;
+  blocks: RevisionBlockSnapshot[];
+}
+
 export interface ExperimentRevision {
   id: string;
   experiment_id: string;
   revision_number: number;
-  snapshot: any;
+  snapshot: RevisionSnapshot;
   content_hash: string;
   change_summary: string | null;
   change_type: string;
@@ -175,12 +331,19 @@ export interface Template {
   updated_at: string;
 }
 
+export interface TemplateBlock {
+  id: string;
+  type: BlockType;
+  label: string;
+  defaultContent: BlockContent;
+}
+
 export interface TemplateVersion {
   id: string;
   template_id: string;
   version_number: number;
-  content: any;
-  metadata: Record<string, any> | null;
+  content: TemplateBlock[];
+  metadata: Record<string, unknown> | null;
   status: string;
   published_at: string | null;
   created_by: string;
@@ -208,10 +371,10 @@ export interface ProtocolStep {
   instruction: string;
   duration: string | null;
   temperature: string | null;
-  parameters: Record<string, any> | null;
+  parameters?: Record<string, unknown> | null;
   notes: string | null;
   warnings: string | null;
-  substeps: ProtocolStep[] | null;
+  substeps?: ProtocolStep[] | null;
 }
 
 export interface ProtocolVersion {
@@ -219,7 +382,7 @@ export interface ProtocolVersion {
   protocol_id: string;
   version_number: number;
   steps: ProtocolStep[];
-  parameters: Record<string, any> | null;
+  parameters: Record<string, unknown> | null;
   notes: string | null;
   status: string;
   published_at: string | null;
@@ -232,7 +395,7 @@ export interface ExperimentProtocol {
   experiment_id: string;
   protocol_id: string;
   protocol_version_id: string;
-  snapshot: any;
+  snapshot: ProtocolStep[];
   created_at: string;
   protocol?: Protocol;
   version?: ProtocolVersion;
@@ -333,7 +496,7 @@ export interface Comment {
 export interface Mention {
   id: string;
   comment_id: string;
-  mentioned_user_id: string;
+  user_id: string;
   created_at: string;
 }
 
@@ -357,6 +520,7 @@ export interface Notification {
 export interface Review {
   id: string;
   experiment_id: string;
+  experiment_revision_id: string;
   reviewer_id: string;
   revision_number: number;
   status: string;
@@ -369,6 +533,7 @@ export interface Review {
 export interface Signature {
   id: string;
   experiment_id: string;
+  experiment_revision_id: string;
   signer_id: string;
   revision_number: number;
   content_hash: string;
@@ -388,7 +553,7 @@ export interface AuditEvent {
   event_type: string;
   actor_id: string;
   revision_number: number | null;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   actor?: Profile;
 }

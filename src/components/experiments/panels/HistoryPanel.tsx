@@ -18,14 +18,9 @@ import {
   CheckCircle2,
   FileText,
   Paperclip,
-  Code,
-  List,
-  CheckSquare,
   Image,
-  FlaskConical,
   Link2,
-  Minus,
-  Table,
+  FlaskConical,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
@@ -101,6 +96,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 // ─── Block renderers for snapshot view ────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: any } }) {
   const { type, content } = block;
 
@@ -401,6 +397,7 @@ function formatBytes(bytes: number): string {
 
 // ─── Snapshot viewer content ────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SnapshotViewer({ snapshot }: { snapshot: any }) {
   if (!snapshot) {
     return <p className="text-sm text-muted-foreground">No snapshot data available.</p>;
@@ -450,8 +447,8 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
         {tags.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             <Tag className="h-3 w-3 text-muted-foreground" />
-            {tags.map((tag: any, i: number) => {
-              const name = typeof tag === 'string' ? tag : tag?.name ?? tag?.id ?? '';
+            {tags.map((tag: Record<string, unknown> | string, i: number) => {
+              const name = typeof tag === 'string' ? tag : String(tag?.name ?? tag?.id ?? '');
               return (
                 <Badge key={i} variant="secondary" className="text-[10px]">
                   {name}
@@ -468,12 +465,12 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
       {blocks.length > 0 && (
         <div className="space-y-3">
           {blocks
-            .sort((a: any, b: any) => {
-              if (a.order_key && b.order_key) return a.order_key.localeCompare(b.order_key);
+            .sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+              if (a.order_key && b.order_key) return (a.order_key as string).localeCompare(b.order_key as string);
               return 0;
             })
-            .map((block: any, i: number) => (
-              <SnapshotBlockRenderer key={block.id ?? i} block={block} />
+            .map((block: Record<string, unknown>, i: number) => (
+              <SnapshotBlockRenderer key={(block.id as string) ?? i} block={block as { type: BlockType; content: Record<string, unknown> | null }} />
             ))}
         </div>
       )}
@@ -491,11 +488,11 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
               <FlaskConical className="h-3.5 w-3.5" />
               Protocols
             </h3>
-            {protocols.map((p: any, i: number) => (
+            {protocols.map((p: Record<string, unknown>, i: number) => (
               <div key={i} className="rounded-lg border bg-muted/30 p-3 text-sm">
-                <div className="font-medium">{p.name ?? p.protocol?.name ?? `Protocol ${i + 1}`}</div>
+                <div className="font-medium">{(p.name as string) ?? ((p.protocol as Record<string, unknown>)?.name as string) ?? `Protocol ${i + 1}`}</div>
                 {p.version_number != null && (
-                  <div className="text-xs text-muted-foreground">Version {p.version_number}</div>
+                  <div className="text-xs text-muted-foreground">Version {String(p.version_number)}</div>
                 )}
               </div>
             ))}
@@ -512,12 +509,12 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
               <Paperclip className="h-3.5 w-3.5" />
               Attachments
             </h3>
-            {attachments.map((a: any, i: number) => (
+            {attachments.map((a: Record<string, unknown>, i: number) => (
               <div key={i} className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
                 <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{a.display_name ?? a.original_filename ?? 'File'}</span>
+                <span className="truncate">{(a.display_name as string) ?? (a.original_filename as string) ?? 'File'}</span>
                 {a.file_size != null && (
-                  <span className="shrink-0 text-xs text-muted-foreground">({formatBytes(a.file_size)})</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">({formatBytes(a.file_size as number)})</span>
                 )}
               </div>
             ))}
@@ -536,7 +533,7 @@ export default function HistoryPanel() {
   const [revisions, setRevisions] = useState<ExperimentRevision[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [loadingRevisions, setLoadingRevisions] = useState(true);
-  const [loadingAudit, setLoadingAudit] = useState(true);
+  const [, setLoadingAudit] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);

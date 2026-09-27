@@ -37,7 +37,7 @@ describe('fractional-indexing block ordering', () => {
 
   it('generates keys between adjacent keys without collision', () => {
     let a = generateKeyBetween(null, null);
-    let b = generateKeyBetween(a, null);
+    const b = generateKeyBetween(a, null);
     for (let i = 0; i < 20; i++) {
       const mid = generateKeyBetween(a, b);
       expect(mid > a).toBe(true);

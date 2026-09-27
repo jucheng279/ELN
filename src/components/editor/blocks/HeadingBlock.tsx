@@ -2,10 +2,11 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import type { HeadingContent } from '@/lib/types';
 
 interface HeadingBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: HeadingContent;
+  onUpdate: (content: HeadingContent) => void;
   readOnly: boolean;
 }
 

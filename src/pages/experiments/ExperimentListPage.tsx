@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, FlaskConical, Search } from 'lucide-react';
 import { useExperimentStore } from '@/stores/experimentStore';
@@ -25,10 +25,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import type { Experiment, ExperimentFilters, ExperimentStatus } from '@/lib/types';
-
-const PAGE_SIZE = 50;
 
 const STATUS_OPTIONS: { value: ExperimentStatus | ''; label: string }[] = [
   { value: '', label: 'All statuses' },

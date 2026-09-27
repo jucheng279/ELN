@@ -345,8 +345,8 @@ export default function TableBlock({ content, onUpdate, readOnly }: TableBlockPr
       const startRow = selectedCell.row;
       const startCol = selectedCell.col;
 
-      let newColumns = [...columns];
-      let newRows = rows.map((r) => [...r]);
+      const newColumns = [...columns];
+      let newRows = rows.map((r: string[]) => [...r]);
 
       // Expand columns if needed
       const maxCols = startCol + Math.max(...pastedRows.map((r) => r.length));

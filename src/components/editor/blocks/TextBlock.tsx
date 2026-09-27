@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -10,10 +10,11 @@ import Highlight from '@tiptap/extension-highlight';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import FloatingToolbar from '@/components/editor/FloatingToolbar';
+import type { ParagraphContent } from '@/lib/types';
 
 interface TextBlockProps {
-  content: any;
-  onUpdate: (content: any) => void;
+  content: ParagraphContent;
+  onUpdate: (content: ParagraphContent) => void;
   readOnly: boolean;
   onSlashCommand?: (rect: { top: number; left: number }) => void;
 }

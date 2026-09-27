@@ -7,6 +7,7 @@ import type {
   ExperimentStatus,
   ExperimentFilters,
   BlockType,
+  BlockContent,
   Tag,
 } from '@/lib/types';
 
@@ -17,6 +18,7 @@ import type {
 const pendingBlockChanges = new Map<string, ExperimentBlock>();
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let activeExperimentId: string | null = null;
+let activeEditorSessionId: string | null = null;
 const AUTOSAVE_DELAY_MS = 2000;
 
 function scheduleSave() {
@@ -36,16 +38,18 @@ async function flushPendingBlocks() {
   state._setSaving(true);
 
   try {
-    const { error } = await supabase.from('experiment_blocks').upsert(
-      blocksToSave.map((b) => ({
+    const expId = activeExperimentId;
+    if (!expId) throw new Error('No active experiment session');
+
+    const { error } = await supabase.rpc('upsert_experiment_blocks', {
+      p_experiment_id: expId,
+      p_blocks: blocksToSave.map((b) => ({
         id: b.id,
-        experiment_id: b.experiment_id,
         type: b.type,
         content: b.content,
         order_key: b.order_key,
       })),
-      { onConflict: 'id' }
-    );
+    });
 
     if (error) throw error;
 
@@ -71,18 +75,43 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 
-function startAutosaveSession(experimentId: string) {
+async function startAutosaveSession(experimentId: string) {
   if (activeExperimentId === experimentId) return;
-  stopAutosaveSession();
+  await stopAutosaveSession();
   activeExperimentId = experimentId;
+
+  try {
+    const { data, error } = await supabase.rpc('claim_editor_session', {
+      p_experiment_id: experimentId,
+    });
+    if (!error && data) {
+      activeEditorSessionId = (data as { session_id: string }).session_id;
+    }
+  } catch {
+    // Non-fatal: session claim may fail for read-only experiments
+  }
+
   window.addEventListener('beforeunload', handleBeforeUnload);
 }
 
-function stopAutosaveSession() {
+async function stopAutosaveSession() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = null;
-  flushPendingBlocks();
+  await flushPendingBlocks();
+
+  if (activeExperimentId && activeEditorSessionId) {
+    try {
+      await supabase.rpc('release_editor_session', {
+        p_experiment_id: activeExperimentId,
+        p_session_id: activeEditorSessionId,
+      });
+    } catch {
+      // Non-fatal
+    }
+  }
+
   activeExperimentId = null;
+  activeEditorSessionId = null;
   window.removeEventListener('beforeunload', handleBeforeUnload);
 }
 
@@ -127,21 +156,21 @@ interface ExperimentActions {
   startExperiment: (id: string) => Promise<void>;
   completeExperiment: (id: string) => Promise<void>;
   reopenExperiment: (id: string) => Promise<void>;
-  submitForReview: (id: string, reviewerId: string) => Promise<any>;
+  submitForReview: (id: string, reviewerId: string) => Promise<void>;
   approveExperiment: (id: string, reviewId: string) => Promise<void>;
   requestChanges: (id: string, reviewId: string, comment?: string) => Promise<void>;
-  signAndLock: (id: string) => Promise<any>;
-  createAmendment: (id: string, reason: string) => Promise<void>;
+  signAndLock: (id: string) => Promise<void>;
+  createAmendment: (id: string, reason: string) => Promise<{ id: string } | null>;
 
   // Blocks
   fetchBlocks: (experimentId: string) => Promise<void>;
   addBlock: (
     experimentId: string,
     type: BlockType,
-    content: any,
+    content: BlockContent,
     afterBlockId?: string
   ) => Promise<ExperimentBlock>;
-  updateBlock: (blockId: string, content: any) => void;
+  updateBlock: (blockId: string, content: BlockContent) => void;
   deleteBlock: (blockId: string) => Promise<void>;
   reorderBlocks: (experimentId: string, blockId: string, newOrderKey: string) => Promise<void>;
   saveBlocks: () => void;
@@ -156,7 +185,7 @@ interface ExperimentActions {
     experimentId: string,
     changeSummary: string,
     changeType: string
-  ) => Promise<any>;
+  ) => Promise<{ revision_number: number } | null>;
 
   // Filters
   setFilters: (filters: Partial<ExperimentFilters>) => void;
@@ -192,7 +221,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   _setLastSaved: (date) => set({ lastSaved: date }),
 
   // ── Session lifecycle ────────────────────────
-  initSession: (experimentId) => startAutosaveSession(experimentId),
+  initSession: (experimentId) => { startAutosaveSession(experimentId); },
   teardownSession: () => {
     stopAutosaveSession();
     set({ currentExperiment: null, blocks: [] });
@@ -263,56 +292,27 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   createExperiment: async (workspaceId, notebookId, title, templateVersionId) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
-
-    const insertPayload: Record<string, any> = {
-      workspace_id: workspaceId,
-      notebook_id: notebookId,
-      title: title ?? 'Untitled Experiment',
-      status: 'draft' as ExperimentStatus,
-      experiment_date: new Date().toISOString().split('T')[0],
-    };
-    if (templateVersionId) insertPayload.template_version_id = templateVersionId;
-
-    const { data, error } = await supabase
-      .from('experiments')
-      .insert(insertPayload)
-      .select()
-      .single();
+    const { data, error } = await supabase.rpc('create_experiment_rpc', {
+      p_workspace_id: workspaceId,
+      p_notebook_id: notebookId,
+      p_title: title ?? 'Untitled Experiment',
+      p_template_version_id: templateVersionId ?? null,
+    });
     if (error) throw error;
-    const experiment = data as Experiment;
 
-    if (templateVersionId) {
-      const { data: tv } = await supabase
-        .from('template_versions')
-        .select('content')
-        .eq('id', templateVersionId)
-        .single();
+    const result = data as { id: string; experiment_number: number; experiment_id: string };
+    const { data: experiment, error: fetchError } = await supabase
+      .from('experiments')
+      .select(
+        '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
+      )
+      .eq('id', result.id)
+      .single();
+    if (fetchError) throw fetchError;
 
-      if (tv?.content && Array.isArray(tv.content)) {
-        let prevKey: string | null = null;
-        const templateBlocks = (tv.content as Array<{ type: BlockType; content: any }>).map(
-          (block) => {
-            const key = generateKeyBetween(prevKey, null);
-            prevKey = key;
-            return {
-              experiment_id: experiment.id,
-              type: block.type,
-              content: block.content,
-              order_key: key,
-            };
-          }
-        );
-        if (templateBlocks.length > 0) {
-          await supabase.from('experiment_blocks').insert(templateBlocks);
-        }
-      }
-    }
-
-    set((state) => ({ experiments: [experiment, ...state.experiments] }));
-    return experiment;
+    const exp = experiment as Experiment;
+    set((state) => ({ experiments: [exp, ...state.experiments] }));
+    return exp;
   },
 
   fetchExperiment: async (id) => {
@@ -327,7 +327,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         .single();
       if (error) throw error;
 
-      let experiment = data as Experiment;
+      const experiment = data as Experiment;
 
       const { data: tagRows } = await supabase
         .from('experiment_tags')
@@ -407,7 +407,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   approveExperiment: async (id, reviewId) => {
-    const { data, error } = await supabase.rpc('approve_experiment', {
+    const { error } = await supabase.rpc('approve_experiment', {
       p_experiment_id: id,
       p_review_id: reviewId,
     });
@@ -416,7 +416,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   requestChanges: async (id, reviewId, comment) => {
-    const { data, error } = await supabase.rpc('request_experiment_changes', {
+    const { error } = await supabase.rpc('request_experiment_changes', {
       p_experiment_id: id,
       p_review_id: reviewId,
       p_comment: comment ?? null,
@@ -441,7 +441,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       p_reason: reason,
     });
     if (error) throw error;
-    await get().fetchExperiment(id);
+    return data as { id: string } | null;
   },
 
   // ── Blocks ────────────────────────────────────
@@ -474,19 +474,15 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       newOrderKey = generateKeyBetween(lastKey, null);
     }
 
-    const { data, error } = await supabase
-      .from('experiment_blocks')
-      .insert({
-        experiment_id: experimentId,
-        type,
-        content,
-        order_key: newOrderKey,
-      })
-      .select()
-      .single();
+    const { data, error } = await supabase.rpc('insert_experiment_block', {
+      p_experiment_id: experimentId,
+      p_type: type,
+      p_content: content,
+      p_order_key: newOrderKey,
+    });
     if (error) throw error;
 
-    const newBlock = data as ExperimentBlock;
+    const newBlock = data as unknown as ExperimentBlock;
     set((state) => {
       const updated = [...state.blocks, newBlock].sort((a, b) =>
         a.order_key.localeCompare(b.order_key)
@@ -514,7 +510,12 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
   deleteBlock: async (blockId) => {
     pendingBlockChanges.delete(blockId);
-    const { error } = await supabase.from('experiment_blocks').delete().eq('id', blockId);
+    const block = get().blocks.find((b) => b.id === blockId);
+    if (!block) return;
+    const { error } = await supabase.rpc('delete_experiment_block', {
+      p_experiment_id: block.experiment_id,
+      p_block_id: blockId,
+    });
     if (error) throw error;
     set((state) => ({ blocks: state.blocks.filter((b) => b.id !== blockId) }));
   },
@@ -527,10 +528,16 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       return { blocks: updatedBlocks };
     });
 
-    const { error } = await supabase
-      .from('experiment_blocks')
-      .update({ order_key: newOrderKey })
-      .eq('id', blockId);
+    const block = get().blocks.find((b) => b.id === blockId);
+    const { error } = await supabase.rpc('upsert_experiment_blocks', {
+      p_experiment_id: experimentId,
+      p_blocks: [{
+        id: blockId,
+        type: block?.type ?? 'paragraph',
+        content: block?.content ?? {},
+        order_key: newOrderKey,
+      }],
+    });
 
     if (error) {
       console.error('Failed to reorder block:', error);
@@ -615,10 +622,9 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   archiveExperiment: async (id) => {
-    const { error } = await supabase
-      .from('experiments')
-      .update({ is_archived: true, status: 'archived' as ExperimentStatus })
-      .eq('id', id);
+    const { error } = await supabase.rpc('archive_experiment_rpc', {
+      p_experiment_id: id,
+    });
     if (error) throw error;
     set((state) => ({
       experiments: state.experiments.filter((e) => e.id !== id),
@@ -627,15 +633,15 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   restoreExperiment: async (id) => {
-    const { data, error } = await supabase
-      .from('experiments')
-      .update({ is_archived: false, status: 'draft' as ExperimentStatus })
-      .eq('id', id)
-      .select()
-      .single();
+    const { error } = await supabase.rpc('restore_experiment_rpc', {
+      p_experiment_id: id,
+    });
     if (error) throw error;
-    const restored = data as Experiment;
-    set((state) => ({ experiments: [restored, ...state.experiments] }));
+    await get().fetchExperiment(id);
+    const restored = get().currentExperiment;
+    if (restored) {
+      set((state) => ({ experiments: [restored, ...state.experiments] }));
+    }
   },
 
   // ── Favorites ─────────────────────────────────
@@ -750,7 +756,8 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     });
     if (error) throw error;
 
-    const revisionNumber = (data as any)?.revision_number;
+    const revisionData = data as { revision_number: number } | null;
+    const revisionNumber = revisionData?.revision_number;
     if (revisionNumber) {
       set((state) => ({
         currentExperiment:

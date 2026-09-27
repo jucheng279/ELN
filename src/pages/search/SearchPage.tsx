@@ -14,7 +14,6 @@ import { useNotebookStore } from '@/stores/notebookStore';
 import type {
   Experiment,
   ExperimentStatus,
-  WorkspaceMember,
   Tag,
 } from '@/lib/types';
 import { Input } from '@/components/ui/input';

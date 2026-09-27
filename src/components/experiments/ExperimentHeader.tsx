@@ -125,8 +125,8 @@ export default function ExperimentHeader({
     try {
       await action();
       toast.success(successMsg);
-    } catch (err: any) {
-      toast.error(err?.message || 'Action failed');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Action failed');
     } finally {
       setActionLoading(false);
     }

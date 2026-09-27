@@ -27,20 +27,24 @@ function scheduleSave() {
   }, AUTOSAVE_DELAY_MS);
 }
 
+let saveInFlight = false;
+
 async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
   if (pendingBlockChanges.size === 0) return;
+  if (saveInFlight) return; // single-flight: don't overlap
 
   const blocksToSave = Array.from(pendingBlockChanges.values());
   pendingBlockChanges.clear();
+  saveInFlight = true;
 
   const state = useExperimentStore.getState();
-  state._setSaving(true);
+  state._setSaveState('saving');
 
   try {
     const expId = activeExperimentId;
     if (!expId) throw new Error('No active experiment session');
 
-    const { error } = await supabase.rpc('upsert_experiment_blocks', {
+    const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
       p_experiment_id: expId,
       p_blocks: blocksToSave.map((b) => ({
         id: b.id,
@@ -53,29 +57,56 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
 
     if (error) throw error;
 
-    // Increment row_version for each saved block in state
-    const savedIds = new Set(blocksToSave.map((b) => b.id));
+    // Merge authoritative server versions into state
+    const serverVersions = new Map<string, number>();
+    const result = data as { updated: Array<{ id: string; row_version: number }> };
+    if (result?.updated) {
+      for (const sv of result.updated) {
+        serverVersions.set(sv.id, sv.row_version);
+      }
+    }
+
     const currentBlocks = useExperimentStore.getState().blocks;
     useExperimentStore.setState({
-      blocks: currentBlocks.map((b) =>
-        savedIds.has(b.id) ? { ...b, row_version: (b.row_version ?? 0) + 1 } : b
-      ),
+      blocks: currentBlocks.map((b) => {
+        const newVersion = serverVersions.get(b.id);
+        if (newVersion != null) {
+          // Rebase any pending edits that still carry the old version
+          const pending = pendingBlockChanges.get(b.id);
+          if (pending) {
+            pendingBlockChanges.set(b.id, { ...pending, row_version: newVersion });
+          }
+          return { ...b, row_version: newVersion };
+        }
+        return b;
+      }),
     });
 
-    state._setSaving(false);
+    saveInFlight = false;
+    state._setSaveState('saved');
     state._setLastSaved(new Date());
+
+    // If new pending edits accumulated during save, schedule another flush
+    if (pendingBlockChanges.size > 0) {
+      scheduleSave();
+    }
   } catch (error) {
+    saveInFlight = false;
+    const isConflict = error instanceof Object && 'code' in error && (error as { code: string }).code === '40001';
+    state._setSaveState(isConflict ? 'conflict' : 'error');
     console.error('Autosave failed:', error);
+    // Restore blocks to pending for retry (don't overwrite newer pending edits)
     for (const b of blocksToSave) {
       if (!pendingBlockChanges.has(b.id)) {
         pendingBlockChanges.set(b.id, b);
       }
     }
-    state._setSaving(false);
     if (options?.throwOnError) {
       throw error;
     }
-    scheduleSave();
+    if (!isConflict) {
+      scheduleSave();
+    }
   }
 }
 
@@ -83,7 +114,6 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
 function handleBeforeUnload(e: BeforeUnloadEvent) {
   if (pendingBlockChanges.size > 0) {
     e.preventDefault();
-    flushPendingBlocks();
   }
 }
 
@@ -136,12 +166,14 @@ interface ExperimentState {
   blocks: ExperimentBlock[];
   loading: boolean;
   saving: boolean;
+  saveState: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
   lastSaved: Date | null;
   filters: ExperimentFilters;
 }
 
 interface ExperimentActions {
   _setSaving: (saving: boolean) => void;
+  _setSaveState: (state: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict') => void;
   _setLastSaved: (date: Date) => void;
 
   fetchExperiments: (workspaceId: string, filters?: ExperimentFilters) => Promise<void>;
@@ -203,7 +235,7 @@ interface ExperimentActions {
 
   // Session lifecycle
   initSession: (experimentId: string) => void;
-  teardownSession: () => void;
+  teardownSession: () => Promise<void>;
 }
 
 const DEFAULT_FILTERS: ExperimentFilters = {
@@ -224,17 +256,24 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   blocks: [],
   loading: false,
   saving: false,
+  saveState: 'clean' as const,
   lastSaved: null,
   filters: { ...DEFAULT_FILTERS },
 
   _setSaving: (saving) => set({ saving }),
+  _setSaveState: (saveState) => set({ saveState, saving: saveState === 'saving' }),
   _setLastSaved: (date) => set({ lastSaved: date }),
 
   // ── Session lifecycle ────────────────────────
   initSession: (experimentId) => { startAutosaveSession(experimentId); },
-  teardownSession: () => {
-    stopAutosaveSession();
-    set({ currentExperiment: null, blocks: [] });
+  teardownSession: async () => {
+    try {
+      await stopAutosaveSession();
+    } catch {
+      // If flush failed, don't clear state — keep dirty blocks visible
+      if (pendingBlockChanges.size > 0) return;
+    }
+    set({ currentExperiment: null, blocks: [], saveState: 'clean' });
   },
 
   // ── Experiments ───────────────────────────────
@@ -510,6 +549,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       });
       return { blocks: updatedBlocks };
     });
+    get()._setSaveState('dirty');
     scheduleSave();
   },
 
@@ -520,6 +560,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     const { error } = await supabase.rpc('delete_experiment_block', {
       p_experiment_id: block.experiment_id,
       p_block_id: blockId,
+      p_expected_version: block.row_version,
     });
     if (error) throw error;
     set((state) => ({ blocks: state.blocks.filter((b) => b.id !== blockId) }));
@@ -541,6 +582,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
         type: block?.type ?? 'paragraph',
         content: block?.content ?? {},
         order_key: newOrderKey,
+        row_version: block?.row_version ?? 1,
       }],
     });
 

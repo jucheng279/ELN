@@ -1,137 +1,140 @@
 -- =============================================================
 -- 04_concurrency_tests.sql — Optimistic concurrency (row_version)
+-- Self-contained: creates experiment + block via domain RPCs
 -- =============================================================
 BEGIN;
-
 CREATE EXTENSION IF NOT EXISTS pgtap;
-CREATE SCHEMA IF NOT EXISTS tests;
 
-CREATE OR REPLACE FUNCTION tests.set_auth_user(user_id uuid)
-RETURNS void LANGUAGE plpgsql AS $$
+SELECT plan(5);
+
+-- Helper
+CREATE OR REPLACE FUNCTION _test_set_auth(uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-  PERFORM set_config('request.jwt.claims', json_build_object(
-    'sub', user_id::text,
-    'role', 'authenticated',
-    'aud', 'authenticated'
-  )::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', uid::text, 'role', 'authenticated', 'aud', 'authenticated')::text, true);
   PERFORM set_config('role', 'authenticated', true);
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION tests.reset_role()
-RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM set_config('role', 'postgres', true);
-  PERFORM set_config('request.jwt.claims', '', true);
-END;
-$$;
-
-SELECT plan(3);
-
--- ─────────────────────────────────────────────────────────────
--- Setup: user, workspace, notebook, draft experiment, block
--- ─────────────────────────────────────────────────────────────
+-- Fixtures
 DO $$
 DECLARE
-  v_user_id      uuid := 'a0000000-0000-0000-0000-000000000002';
-  v_user_owner   uuid := 'a0000000-0000-0000-0000-000000000001';
-  v_workspace_id uuid := 'b0000000-0000-0000-0000-000000000001';
-  v_notebook_id  uuid := 'c0000000-0000-0000-0000-000000000001';
-  v_exp_id       uuid := 'd0000000-0000-0000-0000-000000000010';
-  v_block_id     uuid := 'e0000000-0000-0000-0000-000000000010';
+  v_owner  uuid := 'a0000000-0000-0000-0000-000000000001';
+  v_editor uuid := 'a0000000-0000-0000-0000-000000000002';
+  v_ws     uuid := 'b0000000-0000-0000-0000-000000000001';
+  v_nb     uuid := 'c0000000-0000-0000-0000-000000000001';
+  v_exp_result jsonb;
+  v_block_result jsonb;
 BEGIN
-  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role)
-  VALUES
-    (v_user_owner, 'owner@test.com', crypt('password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated'),
-    (v_user_id,    'editor@test.com', crypt('password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated')
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, aud, role) VALUES
+    (v_owner,  'owner@cc.test',  crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated'),
+    (v_editor, 'editor@cc.test', crypt('pw', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, 'authenticated', 'authenticated')
   ON CONFLICT (id) DO NOTHING;
 
-  INSERT INTO public.workspaces (id, name, created_by)
-  VALUES (v_workspace_id, 'Test Workspace', v_user_owner)
-  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.workspaces (id, name, created_by) VALUES (v_ws, 'CC Workspace', v_owner) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.workspace_members (workspace_id, user_id, role, invited_by) VALUES (v_ws, v_editor, 'member', v_owner) ON CONFLICT DO NOTHING;
+  INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (v_nb, v_ws, 'CC Notebook', v_owner) ON CONFLICT (id) DO NOTHING;
 
-  INSERT INTO public.workspace_members (workspace_id, user_id, role, invited_by)
-  VALUES (v_workspace_id, v_user_id, 'member', v_user_owner)
-  ON CONFLICT DO NOTHING;
+  -- Create experiment via domain RPC (as editor)
+  PERFORM _test_set_auth(v_editor);
+  v_exp_result := public.create_experiment_rpc(v_ws, v_nb, 'Concurrency Test');
+  PERFORM set_config('test.exp_id', v_exp_result->>'id', true);
 
-  INSERT INTO public.notebooks (id, workspace_id, name, created_by)
-  VALUES (v_notebook_id, v_workspace_id, 'Test Notebook', v_user_owner)
-  ON CONFLICT (id) DO NOTHING;
-
-  -- Create experiment directly (superuser, skip triggers for speed)
-  INSERT INTO public.experiments (id, workspace_id, notebook_id, title, status, is_locked, is_archived, created_by)
-  VALUES (v_exp_id, v_workspace_id, v_notebook_id, 'Concurrency Test', 'draft', false, false, v_user_id)
-  ON CONFLICT (id) DO NOTHING;
-
-  -- Create block with row_version = 1
-  INSERT INTO public.experiment_blocks (id, experiment_id, type, content, order_key, created_by, updated_by, row_version)
-  VALUES (v_block_id, v_exp_id, 'text', '{"text":"original"}'::jsonb, 'a0', v_user_id, v_user_id, 1)
-  ON CONFLICT (id) DO NOTHING;
+  -- Create block via domain RPC
+  v_block_result := public.insert_experiment_block(
+    (v_exp_result->>'id')::uuid, 'paragraph', '{"text":"original"}'::jsonb, 'a0'
+  );
+  PERFORM set_config('test.block_id', v_block_result->>'id', true);
+  RESET ROLE;
 END;
 $$;
 
--- ─────────────────────────────────────────────────────────────
--- Test 1: upsert_experiment_blocks with correct row_version succeeds
--- ─────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────
+-- Test 1: upsert with correct row_version (1) succeeds
+-- ─────────────────────────────────────────────────
 SELECT lives_ok(
-  $$
-    DO $inner$
-    DECLARE v_result jsonb;
-    BEGIN
-      PERFORM tests.set_auth_user('a0000000-0000-0000-0000-000000000002');
-      v_result := public.upsert_experiment_blocks(
-        'd0000000-0000-0000-0000-000000000010',
-        jsonb_build_array(
-          jsonb_build_object(
-            'id', 'e0000000-0000-0000-0000-000000000010',
-            'content', '{"text":"updated"}'::jsonb,
-            'row_version', 1
-          )
-        )
-      );
-      PERFORM tests.reset_role();
-    END;
-    $inner$
-  $$,
-  'upsert_experiment_blocks succeeds with correct row_version'
+  $$ DO $i$ DECLARE v_result jsonb; BEGIN
+    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
+    v_result := public.upsert_experiment_blocks(
+      (current_setting('test.exp_id'))::uuid,
+      jsonb_build_array(jsonb_build_object(
+        'id', current_setting('test.block_id'),
+        'content', '{"text":"updated"}'::jsonb,
+        'row_version', 1
+      ))
+    );
+    RESET ROLE;
+  END; $i$ $$,
+  'upsert succeeds with correct row_version=1'
 );
 
--- Verify row_version was incremented
+-- Test 2: row_version incremented to 2
 SELECT is(
-  (SELECT row_version FROM public.experiment_blocks WHERE id = 'e0000000-0000-0000-0000-000000000010'),
+  (SELECT row_version FROM public.experiment_blocks WHERE id = (current_setting('test.block_id'))::uuid),
   2::bigint,
-  'row_version incremented from 1 to 2 after successful upsert'
+  'row_version incremented to 2'
 );
 
--- ─────────────────────────────────────────────────────────────
--- Test 2: upsert_experiment_blocks with stale row_version raises
---         serialization_failure (SQLSTATE 40001)
--- ─────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────
+-- Test 3: upsert with stale row_version=1 raises serialization_failure
+-- ─────────────────────────────────────────────────
 SELECT throws_ok(
-  $$
-    DO $inner$
-    DECLARE v_result jsonb;
-    BEGIN
-      PERFORM tests.set_auth_user('a0000000-0000-0000-0000-000000000002');
-      v_result := public.upsert_experiment_blocks(
-        'd0000000-0000-0000-0000-000000000010',
-        jsonb_build_array(
-          jsonb_build_object(
-            'id', 'e0000000-0000-0000-0000-000000000010',
-            'content', '{"text":"conflict"}'::jsonb,
-            'row_version', 1
-          )
-        )
-      );
-    END;
-    $inner$
-  $$,
-  '40001', -- serialization_failure
-  NULL,
-  'upsert_experiment_blocks with stale row_version raises serialization_failure'
+  $$ DO $i$ DECLARE v_result jsonb; BEGIN
+    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
+    v_result := public.upsert_experiment_blocks(
+      (current_setting('test.exp_id'))::uuid,
+      jsonb_build_array(jsonb_build_object(
+        'id', current_setting('test.block_id'),
+        'content', '{"text":"conflict"}'::jsonb,
+        'row_version', 1
+      ))
+    );
+  END; $i$ $$,
+  '40001', NULL, 'stale row_version raises serialization_failure'
 );
+RESET ROLE;
 
-SELECT tests.reset_role();
+-- ─────────────────────────────────────────────────
+-- Test 4: upsert with missing row_version is rejected
+-- ─────────────────────────────────────────────────
+SELECT throws_ok(
+  $$ DO $i$ DECLARE v_result jsonb; BEGIN
+    PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
+    v_result := public.upsert_experiment_blocks(
+      (current_setting('test.exp_id'))::uuid,
+      jsonb_build_array(jsonb_build_object(
+        'id', current_setting('test.block_id'),
+        'content', '{"text":"no version"}'::jsonb
+      ))
+    );
+  END; $i$ $$,
+  NULL, NULL, 'missing row_version is rejected'
+);
+RESET ROLE;
+
+-- ─────────────────────────────────────────────────
+-- Test 5: upsert returns authoritative server versions
+-- ─────────────────────────────────────────────────
+DO $$
+DECLARE v_result jsonb;
+BEGIN
+  PERFORM _test_set_auth('a0000000-0000-0000-0000-000000000002'::uuid);
+  v_result := public.upsert_experiment_blocks(
+    (current_setting('test.exp_id'))::uuid,
+    jsonb_build_array(jsonb_build_object(
+      'id', current_setting('test.block_id'),
+      'content', '{"text":"v3"}'::jsonb,
+      'row_version', 2
+    ))
+  );
+  PERFORM set_config('test.upsert_result', v_result::text, true);
+  RESET ROLE;
+END;
+$$;
+
+SELECT ok(
+  (current_setting('test.upsert_result')::jsonb->'updated'->0->>'row_version')::bigint = 3,
+  'upsert returns authoritative server row_version=3'
+);
 
 SELECT * FROM finish();
 ROLLBACK;

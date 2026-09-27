@@ -47,14 +47,14 @@ import { cn } from '@/lib/utils';
 interface ExperimentHeaderProps {
   experiment: Experiment;
   readOnly: boolean;
-  saving?: boolean;
+  saveState?: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
   lastSaved?: Date | null;
 }
 
 export default function ExperimentHeader({
   experiment,
   readOnly,
-  saving,
+  saveState = 'clean',
   lastSaved,
 }: ExperimentHeaderProps) {
   const {
@@ -173,12 +173,16 @@ export default function ExperimentHeader({
         )}
 
         <span className="shrink-0 flex items-center gap-1 text-xs text-muted-foreground">
-          {saving ? (
+          {saveState === 'saving' ? (
             <><Loader2 className="h-3 w-3 animate-spin" /><span>Saving...</span></>
+          ) : saveState === 'error' ? (
+            <><Clock className="h-3 w-3 text-red-500" /><span className="text-red-600">Save failed</span></>
+          ) : saveState === 'conflict' ? (
+            <><Clock className="h-3 w-3 text-amber-500" /><span className="text-amber-600">Conflict</span></>
+          ) : saveState === 'dirty' ? (
+            <><Clock className="h-3 w-3 text-amber-500" /><span className="text-amber-600">Unsaved</span></>
           ) : lastSaved ? (
             <><Check className="h-3 w-3 text-green-600" /><span>Saved</span></>
-          ) : lastSaved === null ? (
-            <><Clock className="h-3 w-3 text-amber-500" /><span className="text-amber-600">Unsaved</span></>
           ) : null}
         </span>
 

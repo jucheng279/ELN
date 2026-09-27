@@ -49,7 +49,7 @@ const SIDEBAR_TABS: {
 
 export default function ExperimentPage() {
   const { id } = useParams<{ id: string }>();
-  const { currentExperiment, saving, lastSaved, loading, fetchExperiment } =
+  const { currentExperiment, saveState, lastSaved, loading, fetchExperiment } =
     useExperimentStore();
   const capabilities = useExperimentCapabilities(currentExperiment);
 
@@ -159,7 +159,7 @@ export default function ExperimentPage() {
       <ExperimentHeader
         experiment={currentExperiment}
         readOnly={readOnly}
-        saving={saving}
+        saveState={saveState}
         lastSaved={lastSaved}
       />
 

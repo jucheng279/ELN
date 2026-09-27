@@ -11,6 +11,7 @@ import {
   PenLine,
   Loader2,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -60,6 +61,7 @@ export default function ReviewPanel() {
   } = useExperimentStore();
   const { members, fetchMembers } = useWorkspaceStore();
   const { user } = useAuthStore();
+  const nav = useNavigate();
 
   const [reviews, setReviews] = useState<Review[]>([]);
   const [signature, setSignature] = useState<Signature | null>(null);
@@ -163,12 +165,14 @@ export default function ReviewPanel() {
     if (!latestReview) return;
     runAction(
       async () => {
+        const store = useExperimentStore.getState();
+        store.saveBlocks();
         const { error } = await supabase.rpc('resubmit_for_review', {
           p_experiment_id: exp.id,
           p_review_id: latestReview.id,
         });
         if (error) throw error;
-        await useExperimentStore.getState().fetchExperiment(exp.id);
+        await store.fetchExperiment(exp.id);
       },
       'Resubmitted for review'
     );
@@ -188,7 +192,7 @@ export default function ReviewPanel() {
       async () => {
         const result = await createAmendment(exp.id, amendReason.trim());
         if (result?.id) {
-          window.location.href = `/experiments/${result.id}`;
+          nav(`/app/experiments/${result.id}`);
         }
       },
       'Amendment created — opening new experiment',
@@ -452,7 +456,7 @@ export default function ReviewPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>Create amendment</AlertDialogTitle>
             <AlertDialogDescription>
-              This will unlock the experiment for editing. The original signed record remains intact. A new revision will track the amendment.
+              A new amendment experiment will be created based on this record. The original signed experiment will remain locked and unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1.5">

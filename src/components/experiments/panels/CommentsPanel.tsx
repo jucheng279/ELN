@@ -143,6 +143,7 @@ export default function CommentsPanel() {
     commentText: string,
   ) => {
     if (!currentExperiment || mentionedIds.length === 0) return;
+    // TODO: migrate to server-side RPC when add_comment_with_mentions is created
     const notifications = mentionedIds.map((userId) => ({
       user_id: userId,
       type: 'mention',
@@ -150,7 +151,11 @@ export default function CommentsPanel() {
       body: commentText.slice(0, 200),
       experiment_id: currentExperiment.id,
     }));
-    await supabase.from('notifications').insert(notifications);
+    try {
+      await supabase.from('notifications').insert(notifications);
+    } catch (err) {
+      console.warn('Failed to create mention notifications (RLS may block direct inserts):', err);
+    }
   };
 
   const handleNewComment = async () => {
@@ -164,20 +169,22 @@ export default function CommentsPanel() {
         .single();
       if (threadError) throw threadError;
 
-      const { error: commentError } = await supabase
+      const { data: comment, error: commentError } = await supabase
         .from('comments')
         .insert({
           thread_id: thread.id,
           content: newComment.trim(),
           created_by: user.id,
-        });
+        })
+        .select('id')
+        .single();
       if (commentError) throw commentError;
 
       const mentionedIds = extractMentions(newComment);
       if (mentionedIds.length > 0) {
         const mentionRows = mentionedIds.map((userId) => ({
-          comment_id: thread.id,
-          mentioned_user_id: userId,
+          comment_id: comment.id,
+          user_id: userId,
         }));
         await supabase.from('mentions').insert(mentionRows);
         await createMentionNotifications(mentionedIds, newComment.trim());
@@ -196,15 +203,22 @@ export default function CommentsPanel() {
     if (!replyText.trim() || !user) return;
     setSubmitting(true);
     try {
-      const { error } = await supabase.from('comments').insert({
+      const { data: comment, error } = await supabase.from('comments').insert({
         thread_id: threadId,
         content: replyText.trim(),
         created_by: user.id,
-      });
+      })
+        .select('id')
+        .single();
       if (error) throw error;
 
       const mentionedIds = extractMentions(replyText);
       if (mentionedIds.length > 0) {
+        const mentionRows = mentionedIds.map((userId) => ({
+          comment_id: comment.id,
+          user_id: userId,
+        }));
+        await supabase.from('mentions').insert(mentionRows);
         await createMentionNotifications(mentionedIds, replyText.trim());
       }
 

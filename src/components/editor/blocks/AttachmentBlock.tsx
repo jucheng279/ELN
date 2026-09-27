@@ -106,7 +106,7 @@ export default function AttachmentBlock({
       try {
         await archiveAttachment(data.attachmentId);
       } catch {
-        // Allow UI removal even if archive fails
+        return;
       }
     }
     onUpdate(DEFAULT_CONTENT);

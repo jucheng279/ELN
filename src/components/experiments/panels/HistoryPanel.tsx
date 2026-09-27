@@ -44,6 +44,11 @@ import {
 } from '@/components/ui/collapsible';
 import EmptyState from '@/components/eln/EmptyState';
 import { cn } from '@/lib/utils';
+import DOMPurify from 'dompurify';
+
+function sanitizeHtml(html: string): string {
+  return DOMPurify.sanitize(html);
+}
 
 const PAGE_SIZE = 20;
 
@@ -109,7 +114,7 @@ function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: a
       return (
         <div
           className="prose prose-sm max-w-none text-foreground dark:prose-invert"
-          dangerouslySetInnerHTML={{ __html: content?.html ?? content?.text ?? '' }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(content?.html ?? content?.text ?? '') }}
         />
       );
 
@@ -176,7 +181,7 @@ function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: a
       return (
         <div className={cn('flex gap-2.5 rounded-lg border p-3', style.bg, style.border)}>
           <CalloutIcon className="mt-0.5 h-4 w-4 shrink-0" />
-          <div className="prose prose-sm max-w-none text-foreground dark:prose-invert" dangerouslySetInnerHTML={{ __html: text }} />
+          <div className="prose prose-sm max-w-none text-foreground dark:prose-invert" dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
         </div>
       );
     }
@@ -187,7 +192,7 @@ function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: a
         return (
           <div
             className="overflow-x-auto rounded-lg border [&_table]:w-full [&_table]:text-sm [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium"
-            dangerouslySetInnerHTML={{ __html: html }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
           />
         );
       }
@@ -274,7 +279,7 @@ function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: a
       return <hr className="border-border" />;
 
     case 'image': {
-      const url = content?.url ?? content?.src ?? '';
+      const url = content?.url ?? content?.src ?? content?.storagePath ?? '';
       const alt = content?.alt ?? content?.caption ?? '';
       return (
         <div className="space-y-1">
@@ -340,7 +345,7 @@ function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: a
             {title}
           </div>
           {text && (
-            <div className="prose prose-sm max-w-none p-3 dark:prose-invert" dangerouslySetInnerHTML={{ __html: text }} />
+            <div className="prose prose-sm max-w-none p-3 dark:prose-invert" dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
           )}
         </div>
       );

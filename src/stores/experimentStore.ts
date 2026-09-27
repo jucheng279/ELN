@@ -28,7 +28,7 @@ function scheduleSave() {
   }, AUTOSAVE_DELAY_MS);
 }
 
-async function flushPendingBlocks() {
+async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
   if (pendingBlockChanges.size === 0) return;
 
   const blocksToSave = Array.from(pendingBlockChanges.values());
@@ -63,6 +63,9 @@ async function flushPendingBlocks() {
       }
     }
     state._setSaving(false);
+    if (options?.throwOnError) {
+      throw error;
+    }
     scheduleSave();
   }
 }
@@ -103,7 +106,6 @@ async function stopAutosaveSession() {
     try {
       await supabase.rpc('release_editor_session', {
         p_experiment_id: activeExperimentId,
-        p_session_id: activeEditorSessionId,
       });
     } catch {
       // Non-fatal
@@ -384,6 +386,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   completeExperiment: async (id) => {
+    await flushPendingBlocks({ throwOnError: true });
     const { error } = await supabase.rpc('complete_experiment', { p_experiment_id: id });
     if (error) throw error;
     await get().fetchExperiment(id);
@@ -396,7 +399,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   submitForReview: async (id, reviewerId) => {
-    await flushPendingBlocks();
+    await flushPendingBlocks({ throwOnError: true });
     const { data, error } = await supabase.rpc('submit_for_review', {
       p_experiment_id: id,
       p_reviewer_id: reviewerId,
@@ -426,7 +429,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   signAndLock: async (id) => {
-    await flushPendingBlocks();
+    await flushPendingBlocks({ throwOnError: true });
     const { data, error } = await supabase.rpc('sign_and_lock_experiment', {
       p_experiment_id: id,
     });
@@ -553,70 +556,24 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   duplicateExperiment: async (id, options = {}) => {
     const { includeBlocks = true, includeProtocols = false } = options;
 
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) throw new Error('Not authenticated');
+    const { data, error } = await supabase.rpc('duplicate_experiment_rpc', {
+      p_experiment_id: id,
+      p_include_blocks: includeBlocks,
+      p_include_protocols: includeProtocols,
+    });
+    if (error) throw error;
 
-    const { data: source, error: fetchError } = await supabase
+    const result = data as { id: string };
+    const { data: experiment, error: fetchError } = await supabase
       .from('experiments')
-      .select('*')
-      .eq('id', id)
+      .select(
+        '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
+      )
+      .eq('id', result.id)
       .single();
     if (fetchError) throw fetchError;
-    const src = source as Experiment;
 
-    const { data: dup, error: dupError } = await supabase
-      .from('experiments')
-      .insert({
-        workspace_id: src.workspace_id,
-        notebook_id: src.notebook_id,
-        folder_id: src.folder_id,
-        title: `${src.title} (Copy)`,
-        status: 'draft' as ExperimentStatus,
-        experiment_date: new Date().toISOString().split('T')[0],
-        template_id: src.template_id,
-        template_version_id: src.template_version_id,
-      })
-      .select()
-      .single();
-    if (dupError) throw dupError;
-    const duplicated = dup as Experiment;
-
-    if (includeBlocks) {
-      const { data: srcBlocks } = await supabase
-        .from('experiment_blocks')
-        .select('*')
-        .eq('experiment_id', id)
-        .order('order_key', { ascending: true });
-
-      if (srcBlocks && srcBlocks.length > 0) {
-        const newBlocks = srcBlocks.map((b) => ({
-          experiment_id: duplicated.id,
-          type: b.type,
-          content: b.content,
-          order_key: b.order_key,
-        }));
-        await supabase.from('experiment_blocks').insert(newBlocks);
-      }
-    }
-
-    if (includeProtocols) {
-      const { data: srcProtocols } = await supabase
-        .from('experiment_protocols')
-        .select('*')
-        .eq('experiment_id', id);
-
-      if (srcProtocols && srcProtocols.length > 0) {
-        const newProtocols = srcProtocols.map((p) => ({
-          experiment_id: duplicated.id,
-          protocol_id: p.protocol_id,
-          protocol_version_id: p.protocol_version_id,
-          snapshot: p.snapshot,
-        }));
-        await supabase.from('experiment_protocols').insert(newProtocols);
-      }
-    }
-
+    const duplicated = experiment as Experiment;
     set((state) => ({ experiments: [duplicated, ...state.experiments] }));
     return duplicated;
   },
@@ -748,7 +705,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   // ── Revisions (server-side RPC) ──────────────
 
   createRevision: async (experimentId, changeSummary, changeType) => {
-    await flushPendingBlocks();
+    await flushPendingBlocks({ throwOnError: true });
     const { data, error } = await supabase.rpc('create_revision', {
       p_experiment_id: experimentId,
       p_change_summary: changeSummary,

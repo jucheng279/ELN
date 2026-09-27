@@ -1,21 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import type { ExperimentStatus } from '@/lib/types';
 
-const CONTENT_MUTABLE_STATUSES: ExperimentStatus[] = ['draft', 'in_progress'];
+const CONTENT_MUTABLE_STATUSES: ExperimentStatus[] = ['draft', 'in_progress', 'changes_requested'];
 const ALL_STATUSES: ExperimentStatus[] = [
   'draft', 'in_progress', 'completed', 'in_review',
   'changes_requested', 'approved', 'locked', 'archived',
 ];
 
 describe('can_mutate_experiment_content logic', () => {
-  it('only draft and in_progress are content-mutable', () => {
-    expect(CONTENT_MUTABLE_STATUSES).toEqual(['draft', 'in_progress']);
+  it('only draft, in_progress, and changes_requested are content-mutable', () => {
+    expect(CONTENT_MUTABLE_STATUSES).toEqual(['draft', 'in_progress', 'changes_requested']);
   });
 
   it('completed, in_review, approved, locked, archived are NOT content-mutable', () => {
     const nonMutable = ALL_STATUSES.filter((s) => !CONTENT_MUTABLE_STATUSES.includes(s));
     expect(nonMutable).toEqual([
-      'completed', 'in_review', 'changes_requested', 'approved', 'locked', 'archived',
+      'completed', 'in_review', 'approved', 'locked', 'archived',
     ]);
   });
 });

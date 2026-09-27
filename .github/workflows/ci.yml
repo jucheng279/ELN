@@ -28,5 +28,11 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Verify migrations exist
+        run: |
+          count=$(ls -1 supabase/migrations/*.sql 2>/dev/null | wc -l)
+          echo "$count migration files found"
+          if [ "$count" -lt 1 ]; then echo "No migration files found" && exit 1; fi
+
       - name: Production build
         run: npm run build

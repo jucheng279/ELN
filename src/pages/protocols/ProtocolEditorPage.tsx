@@ -273,40 +273,37 @@ export default function ProtocolEditorPage() {
     if (!id) return;
     setPublishing(true);
     try {
-      const { data: user } = await supabase.auth.getUser();
       const payload = {
         steps,
         parameters: serializeParameters(),
         notes: notes.trim() || null,
       };
 
-      await supabase
-        .from('protocol_versions')
-        .update({ status: 'superseded' })
-        .eq('protocol_id', id)
-        .eq('status', 'published');
-
-      const nextNum = (versions[0]?.version_number ?? 0) + 1;
       const currentVersion = versions.find((v) => v.id === selectedVersionId);
+      let versionIdToPublish = selectedVersionId;
 
       if (currentVersion && currentVersion.status === 'draft') {
         await supabase
           .from('protocol_versions')
-          .update({
-            ...payload,
-            status: 'published',
-            published_at: new Date().toISOString(),
-          })
+          .update(payload)
           .eq('id', currentVersion.id);
+        versionIdToPublish = currentVersion.id;
       } else {
-        await supabase.from('protocol_versions').insert({
-          protocol_id: id,
-          version_number: nextNum,
-          ...payload,
-          status: 'published',
-          published_at: new Date().toISOString(),
-          created_by: user.user!.id,
-        });
+        const { data: user } = await supabase.auth.getUser();
+        const nextNum = (versions[0]?.version_number ?? 0) + 1;
+        const { data: newVer, error: insertErr } = await supabase
+          .from('protocol_versions')
+          .insert({
+            protocol_id: id,
+            version_number: nextNum,
+            ...payload,
+            status: 'draft',
+            created_by: user.user!.id,
+          })
+          .select('id')
+          .single();
+        if (insertErr) throw insertErr;
+        versionIdToPublish = newVer.id;
       }
 
       await supabase
@@ -315,13 +312,14 @@ export default function ProtocolEditorPage() {
           name: name.trim(),
           description: description.trim() || null,
           category: category.trim() || null,
-          current_version:
-            currentVersion?.status === 'draft'
-              ? currentVersion.version_number
-              : nextNum,
-          status: 'published',
         })
         .eq('id', id);
+
+      const { error: pubErr } = await supabase.rpc('publish_protocol_version', {
+        p_protocol_id: id,
+        p_version_id: versionIdToPublish,
+      });
+      if (pubErr) throw pubErr;
 
       await fetchProtocol();
     } catch (err) {

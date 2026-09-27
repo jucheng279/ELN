@@ -166,7 +166,7 @@ export default function ReviewPanel() {
     runAction(
       async () => {
         const store = useExperimentStore.getState();
-        store.saveBlocks();
+        await store.saveBlocks();
         const { error } = await supabase.rpc('resubmit_for_review', {
           p_experiment_id: exp.id,
           p_review_id: latestReview.id,

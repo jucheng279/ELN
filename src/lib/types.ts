@@ -279,6 +279,7 @@ export interface ExperimentBlock {
   type: BlockType;
   content: BlockContent;
   order_key: string;
+  row_version: number;
   created_by: string;
   updated_by: string | null;
   created_at: string;

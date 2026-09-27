@@ -533,7 +533,7 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
 // ─── Main component ─────────────────────────────────────────────────
 
 export default function HistoryPanel() {
-  const { currentExperiment, createRevision } = useExperimentStore();
+  const { currentExperiment, createRevision, fetchExperiment } = useExperimentStore();
 
   const [revisions, setRevisions] = useState<ExperimentRevision[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -612,7 +612,6 @@ export default function HistoryPanel() {
       await createRevision(
         currentExperiment.id,
         'Manual checkpoint',
-        'checkpoint',
       );
       await fetchRevisions();
     } catch (err) {
@@ -626,11 +625,13 @@ export default function HistoryPanel() {
     if (!currentExperiment || !viewingRevision) return;
     setRestoring(true);
     try {
-      await createRevision(
-        currentExperiment.id,
-        `Restored from revision v${viewingRevision.revision_number}`,
-        'edit',
-      );
+      const { error } = await supabase.rpc('restore_experiment_revision', {
+        p_experiment_id: currentExperiment.id,
+        p_revision_id: viewingRevision.id,
+      });
+      if (error) throw error;
+
+      await fetchExperiment(currentExperiment.id);
       await fetchRevisions();
       setViewingRevision(null);
     } catch (err) {

@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase';
 import type {
   Experiment,
   ExperimentBlock,
-  ExperimentStatus,
   ExperimentFilters,
   BlockType,
   BlockContent,
@@ -48,10 +47,20 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }) {
         type: b.type,
         content: b.content,
         order_key: b.order_key,
+        row_version: b.row_version,
       })),
     });
 
     if (error) throw error;
+
+    // Increment row_version for each saved block in state
+    const savedIds = new Set(blocksToSave.map((b) => b.id));
+    const currentBlocks = useExperimentStore.getState().blocks;
+    useExperimentStore.setState({
+      blocks: currentBlocks.map((b) =>
+        savedIds.has(b.id) ? { ...b, row_version: (b.row_version ?? 0) + 1 } : b
+      ),
+    });
 
     state._setSaving(false);
     state._setLastSaved(new Date());
@@ -175,7 +184,7 @@ interface ExperimentActions {
   updateBlock: (blockId: string, content: BlockContent) => void;
   deleteBlock: (blockId: string) => Promise<void>;
   reorderBlocks: (experimentId: string, blockId: string, newOrderKey: string) => Promise<void>;
-  saveBlocks: () => void;
+  saveBlocks: () => Promise<void>;
 
   // Favorites & Tags
   toggleFavorite: (experimentId: string) => Promise<void>;
@@ -185,8 +194,7 @@ interface ExperimentActions {
   // Revisions (server-side RPC)
   createRevision: (
     experimentId: string,
-    changeSummary: string,
-    changeType: string
+    changeSummary: string
   ) => Promise<{ revision_number: number } | null>;
 
   // Filters
@@ -359,22 +367,16 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   updateExperiment: async (id, updates) => {
-    const { data, error } = await supabase
-      .from('experiments')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
+    const { error } = await supabase.rpc('update_experiment_metadata', {
+      p_experiment_id: id,
+      p_title: updates.title ?? null,
+      p_experiment_date: updates.experiment_date ?? null,
+      p_notebook_id: updates.notebook_id ?? null,
+      p_folder_id: updates.folder_id ?? null,
+    });
     if (error) throw error;
 
-    const updated = data as Experiment;
-    set((state) => ({
-      experiments: state.experiments.map((e) => (e.id === id ? { ...e, ...updated } : e)),
-      currentExperiment:
-        state.currentExperiment?.id === id
-          ? { ...state.currentExperiment, ...updated }
-          : state.currentExperiment,
-    }));
+    await get().fetchExperiment(id);
   },
 
   // ── Domain status RPCs ─────────────────────
@@ -500,7 +502,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     set((state) => {
       const updatedBlocks = state.blocks.map((b) => {
         if (b.id === blockId) {
-          const updated = { ...b, content, updated_at: new Date().toISOString() };
+          const updated = { ...b, content, updated_at: new Date().toISOString(), row_version: b.row_version };
           pendingBlockChanges.set(blockId, updated);
           return updated;
         }
@@ -548,9 +550,9 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     }
   },
 
-  saveBlocks: () => {
+  saveBlocks: async () => {
     if (autosaveTimer) clearTimeout(autosaveTimer);
-    flushPendingBlocks();
+    await flushPendingBlocks({ throwOnError: true });
   },
 
   duplicateExperiment: async (id, options = {}) => {
@@ -704,12 +706,11 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
   // ── Revisions (server-side RPC) ──────────────
 
-  createRevision: async (experimentId, changeSummary, changeType) => {
+  createRevision: async (experimentId, changeSummary) => {
     await flushPendingBlocks({ throwOnError: true });
-    const { data, error } = await supabase.rpc('create_revision', {
+    const { data, error } = await supabase.rpc('create_checkpoint', {
       p_experiment_id: experimentId,
       p_change_summary: changeSummary,
-      p_change_type: changeType,
     });
     if (error) throw error;
 

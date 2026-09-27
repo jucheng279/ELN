@@ -28,11 +28,24 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Verify migrations exist
-        run: |
-          count=$(ls -1 supabase/migrations/*.sql 2>/dev/null | wc -l)
-          echo "$count migration files found"
-          if [ "$count" -lt 1 ]; then echo "No migration files found" && exit 1; fi
-
       - name: Production build
         run: npm run build
+
+  database-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase local
+        run: supabase db start
+
+      - name: Apply migrations
+        run: supabase db reset
+
+      - name: Run pgTAP tests
+        run: supabase test db

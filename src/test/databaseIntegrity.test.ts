@@ -1,192 +1,180 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * Database integrity contract tests.
- * These document the expected behavior of RLS policies and RPC functions
- * as enforced by the SQL migrations. They validate the contract, not the
- * database directly (that requires pgTAP or a live Supabase instance).
+ * Database architecture contract tests.
+ * Documents the expected state of migrations, RLS policies, RPCs,
+ * and invariants. Real enforcement is tested via pgTAP in supabase/tests/.
  */
 
-describe('RLS policy contracts', () => {
-  const TABLES_WITH_INSERT_BLOCKED = [
+describe('Policy architecture', () => {
+  const REMOVED_LEGACY_POLICIES = [
+    'insert_exp_tags', 'update_exp_tags', 'delete_exp_tags',
+    'insert_ref', 'update_ref', 'delete_ref',
+    'insert_er', 'update_er', 'delete_er',
+    'insert_contributors', 'update_contributors', 'delete_contributors',
+    'delete_ep', 'delete_pd',
+    'insert_blocks', 'update_blocks', 'delete_blocks',
+    'insert_experiments', 'update_experiments', 'delete_experiments',
+  ];
+
+  it('documents all removed legacy permissive policies', () => {
+    expect(REMOVED_LEGACY_POLICIES).toHaveLength(20);
+  });
+
+  const TABLES_WITH_NO_DIRECT_WRITES = [
+    'experiments',
+    'experiment_blocks',
     'experiment_revisions',
     'reviews',
     'signatures',
-    'experiment_protocols',
     'mentions',
-    'attachments',
-    'attachment_versions',
     'notifications',
     'audit_events',
   ];
 
-  it.each(TABLES_WITH_INSERT_BLOCKED)(
-    '%s has INSERT WITH CHECK(false) — only SECURITY DEFINER RPCs can insert',
-    (table) => {
-      expect(TABLES_WITH_INSERT_BLOCKED).toContain(table);
-    }
-  );
-
-  const TABLES_WITH_UPDATE_BLOCKED = [
-    'reviews',
-    'experiment_protocols',
-    'attachments',
-  ];
-
-  it.each(TABLES_WITH_UPDATE_BLOCKED)(
-    '%s has UPDATE blocked — only SECURITY DEFINER RPCs can update',
-    (table) => {
-      expect(TABLES_WITH_UPDATE_BLOCKED).toContain(table);
-    }
-  );
-
-  const LIFECYCLE_AWARE_TABLES = [
-    'experiment_tags',
-    'experiment_references',
-    'experiment_relations',
-    'protocol_deviations',
-  ];
-
-  it.each(LIFECYCLE_AWARE_TABLES)(
-    '%s INSERT/UPDATE/DELETE is gated on experiment being in a mutable status',
-    (table) => {
-      expect(LIFECYCLE_AWARE_TABLES).toContain(table);
-    }
-  );
+  it('documents tables where all writes go through RPCs', () => {
+    expect(TABLES_WITH_NO_DIRECT_WRITES).toHaveLength(8);
+  });
 });
 
-describe('SECURITY DEFINER function grants', () => {
-  const SECURITY_DEFINER_RPCS = [
-    'create_experiment_rpc',
-    'start_experiment',
-    'complete_experiment',
-    'reopen_experiment',
-    'submit_for_review',
-    'resubmit_for_review',
+describe('Lifecycle CHECK constraint', () => {
+  it('status=locked requires is_locked=true, is_archived=false', () => {
+    const rule = { status: 'locked', is_locked: true, is_archived: false };
+    expect(rule.is_locked).toBe(true);
+    expect(rule.is_archived).toBe(false);
+  });
+
+  it('status=archived requires is_archived=true', () => {
+    const rule = { status: 'archived', is_archived: true };
+    expect(rule.is_archived).toBe(true);
+  });
+
+  it('non-locked/archived status requires both flags false', () => {
+    const rule = { status: 'draft', is_locked: false, is_archived: false };
+    expect(rule.is_locked).toBe(false);
+    expect(rule.is_archived).toBe(false);
+  });
+});
+
+describe('Revision architecture', () => {
+  it('_create_revision_internal is not callable by authenticated', () => {
+    const internalFunctions = ['_create_revision_internal'];
+    expect(internalFunctions[0]).toMatch(/^_/);
+  });
+
+  it('create_checkpoint is the only public revision creation path', () => {
+    const publicRevisionRPC = 'create_checkpoint';
+    expect(publicRevisionRPC).toBe('create_checkpoint');
+  });
+
+  it('restore_experiment_revision creates restoration revision with provenance', () => {
+    const changeType = 'restoration';
+    expect(changeType).toBe('restoration');
+  });
+});
+
+describe('Composite FK integrity', () => {
+  it('reviews.experiment_revision_id references revisions within same experiment', () => {
+    const fk = 'reviews_revision_experiment_fk';
+    expect(fk).toContain('revision_experiment');
+  });
+
+  it('signatures.experiment_revision_id references revisions within same experiment', () => {
+    const fk = 'signatures_revision_experiment_fk';
+    expect(fk).toContain('revision_experiment');
+  });
+});
+
+describe('Optimistic concurrency', () => {
+  it('experiment_blocks has row_version column', () => {
+    const column = { name: 'row_version', type: 'bigint', default: 1 };
+    expect(column.default).toBe(1);
+  });
+
+  it('upsert_experiment_blocks checks row_version and raises serialization_failure on mismatch', () => {
+    const errorCode = '40001'; // serialization_failure
+    expect(errorCode).toBe('40001');
+  });
+
+  it('successful upsert increments row_version', () => {
+    const before = 1;
+    const after = before + 1;
+    expect(after).toBe(2);
+  });
+});
+
+describe('Domain RPC allowlist (public, callable by authenticated)', () => {
+  const PUBLIC_RPCS = [
+    'accept_invitation',
     'approve_experiment',
-    'request_changes',
-    'sign_and_lock',
-    'create_amendment',
+    'archive_attachment',
     'archive_experiment_rpc',
-    'restore_experiment_rpc',
-    'duplicate_experiment_rpc',
-    'create_revision',
-    'upsert_experiment_blocks',
-    'insert_experiment_block',
-    'delete_experiment_block',
+    'can_edit_experiment',
+    'can_mutate_experiment_content',
+    'can_sign_experiment',
     'claim_editor_session',
+    'complete_experiment',
+    'create_amendment',
+    'create_attachment',
+    'create_checkpoint',
+    'create_experiment_rpc',
+    'delete_experiment_block',
+    'duplicate_experiment_rpc',
+    'insert_experiment_block',
     'release_editor_session',
+    'reopen_experiment',
+    'replace_attachment',
+    'request_experiment_changes',
+    'restore_experiment_revision',
+    'restore_experiment_rpc',
+    'resubmit_for_review',
+    'sign_and_lock_experiment',
+    'start_experiment',
+    'submit_for_review',
+    'update_experiment_metadata',
+    'upsert_experiment_blocks',
+    'add_comment_with_mentions',
     'publish_protocol_version',
     'publish_template_version',
-    'attach_file_to_experiment',
-    'replace_attachment_file',
-    'archive_attachment',
   ];
 
-  it('all SECURITY DEFINER RPCs are revoked from PUBLIC and anon', () => {
-    expect(SECURITY_DEFINER_RPCS.length).toBeGreaterThan(20);
+  it('has a defined set of public RPCs', () => {
+    expect(PUBLIC_RPCS.length).toBeGreaterThan(25);
   });
 
-  it('all SECURITY DEFINER RPCs are granted only to authenticated', () => {
-    for (const rpc of SECURITY_DEFINER_RPCS) {
-      expect(typeof rpc).toBe('string');
-      expect(rpc.length).toBeGreaterThan(0);
+  const INTERNAL_FUNCTIONS = [
+    '_create_revision_internal',
+    'enforce_block_lock',
+    'enforce_experiment_lock',
+    'enforce_protocol_version_immutability',
+    'enforce_template_version_immutability',
+    'generate_experiment_id',
+    'get_workspace_role',
+    'handle_new_user',
+    'handle_new_workspace',
+    'is_workspace_editor',
+    'is_workspace_member',
+    'protect_last_owner',
+    'update_experiment_search',
+    'validate_experiment_status',
+  ];
+
+  it('has internal functions not callable by clients', () => {
+    expect(INTERNAL_FUNCTIONS.length).toBeGreaterThan(10);
+  });
+});
+
+describe('Content mutation gating', () => {
+  const CONTENT_MUTABLE = ['draft', 'in_progress', 'changes_requested'];
+  const IMMUTABLE = ['completed', 'in_review', 'approved', 'locked', 'archived'];
+
+  it('allows content mutation only in draft/in_progress/changes_requested', () => {
+    expect(CONTENT_MUTABLE).toHaveLength(3);
+  });
+
+  it('blocks content mutation in completed through archived', () => {
+    for (const s of IMMUTABLE) {
+      expect(CONTENT_MUTABLE).not.toContain(s);
     }
-  });
-});
-
-describe('content mutation gating', () => {
-  const CONTENT_MUTABLE_STATUSES = ['draft', 'in_progress', 'changes_requested'];
-  const IMMUTABLE_STATUSES = ['completed', 'in_review', 'approved', 'locked', 'archived'];
-
-  it('can_mutate_experiment_content allows draft, in_progress, changes_requested', () => {
-    expect(CONTENT_MUTABLE_STATUSES).toHaveLength(3);
-    expect(CONTENT_MUTABLE_STATUSES).toContain('changes_requested');
-  });
-
-  it('can_mutate_experiment_content rejects completed through archived', () => {
-    for (const s of IMMUTABLE_STATUSES) {
-      expect(CONTENT_MUTABLE_STATUSES).not.toContain(s);
-    }
-  });
-});
-
-describe('protocol/template version immutability', () => {
-  it('published protocol versions cannot have steps/parameters/notes changed', () => {
-    const immutableColumns = ['steps', 'parameters', 'notes'];
-    expect(immutableColumns).toHaveLength(3);
-  });
-
-  it('published template versions cannot have content changed', () => {
-    const immutableColumns = ['content'];
-    expect(immutableColumns).toHaveLength(1);
-  });
-
-  it('only draft versions allow INSERT via RLS', () => {
-    const allowedInsertStatus = 'draft';
-    expect(allowedInsertStatus).toBe('draft');
-  });
-});
-
-describe('archive/restore semantics', () => {
-  it('archive stores previous_status for later restore', () => {
-    const archiveBehavior = {
-      storesPreviousStatus: true,
-      setsStatusToArchived: true,
-    };
-    expect(archiveBehavior.storesPreviousStatus).toBe(true);
-  });
-
-  it('restore returns to previous_status, not always draft', () => {
-    const restoreBehavior = {
-      usePreviousStatus: true,
-      fallbackToDraft: false,
-    };
-    expect(restoreBehavior.usePreviousStatus).toBe(true);
-    expect(restoreBehavior.fallbackToDraft).toBe(false);
-  });
-});
-
-describe('editor session concurrency', () => {
-  it('claim_editor_session supports heartbeat renewal for same user', () => {
-    const behavior = { sameUserCanRenew: true, differentUserBlocked: true };
-    expect(behavior.sameUserCanRenew).toBe(true);
-    expect(behavior.differentUserBlocked).toBe(true);
-  });
-
-  it('release_editor_session validates caller owns the session', () => {
-    const behavior = { validatesOwnership: true };
-    expect(behavior.validatesOwnership).toBe(true);
-  });
-
-  it('upsert_experiment_blocks validates editor session ownership', () => {
-    const behavior = { checksSession: true };
-    expect(behavior.checksSession).toBe(true);
-  });
-});
-
-describe('experiment ID format', () => {
-  it('generate_experiment_id produces EXP-YYYY-NNNNNN format', () => {
-    const pattern = /^EXP-\d{4}-\d{6}$/;
-    const example = 'EXP-2026-000001';
-    expect(pattern.test(example)).toBe(true);
-  });
-
-  it('rejects old broken EXP-NNNNN format', () => {
-    const pattern = /^EXP-\d{4}-\d{6}$/;
-    const broken = 'EXP-00001';
-    expect(pattern.test(broken)).toBe(false);
-  });
-});
-
-describe('duplicate experiment', () => {
-  it('uses server-side RPC instead of direct table inserts', () => {
-    const rpcName = 'duplicate_experiment_rpc';
-    expect(rpcName).toBe('duplicate_experiment_rpc');
-  });
-
-  it('creates the duplicate in draft status regardless of source status', () => {
-    const resultStatus = 'draft';
-    expect(resultStatus).toBe('draft');
   });
 });

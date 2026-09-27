@@ -138,57 +138,18 @@ export default function CommentsPanel() {
     return mentioned;
   };
 
-  const createMentionNotifications = async (
-    mentionedIds: string[],
-    commentText: string,
-  ) => {
-    if (!currentExperiment || mentionedIds.length === 0) return;
-    // TODO: migrate to server-side RPC when add_comment_with_mentions is created
-    const notifications = mentionedIds.map((userId) => ({
-      user_id: userId,
-      type: 'mention',
-      title: 'You were mentioned in a comment',
-      body: commentText.slice(0, 200),
-      experiment_id: currentExperiment.id,
-    }));
-    try {
-      await supabase.from('notifications').insert(notifications);
-    } catch (err) {
-      console.warn('Failed to create mention notifications (RLS may block direct inserts):', err);
-    }
-  };
-
   const handleNewComment = async () => {
     if (!newComment.trim() || !currentExperiment || !user) return;
     setSubmitting(true);
     try {
-      const { data: thread, error: threadError } = await supabase
-        .from('comment_threads')
-        .insert({ experiment_id: currentExperiment.id })
-        .select()
-        .single();
-      if (threadError) throw threadError;
-
-      const { data: comment, error: commentError } = await supabase
-        .from('comments')
-        .insert({
-          thread_id: thread.id,
-          content: newComment.trim(),
-          created_by: user.id,
-        })
-        .select('id')
-        .single();
-      if (commentError) throw commentError;
-
       const mentionedIds = extractMentions(newComment);
-      if (mentionedIds.length > 0) {
-        const mentionRows = mentionedIds.map((userId) => ({
-          comment_id: comment.id,
-          user_id: userId,
-        }));
-        await supabase.from('mentions').insert(mentionRows);
-        await createMentionNotifications(mentionedIds, newComment.trim());
-      }
+      const { error } = await supabase.rpc('add_comment_with_mentions', {
+        p_experiment_id: currentExperiment.id,
+        p_thread_id: null,
+        p_content: newComment.trim(),
+        p_mentioned_user_ids: mentionedIds,
+      });
+      if (error) throw error;
 
       setNewComment('');
       await fetchThreads();
@@ -200,27 +161,17 @@ export default function CommentsPanel() {
   };
 
   const handleReply = async (threadId: string) => {
-    if (!replyText.trim() || !user) return;
+    if (!replyText.trim() || !currentExperiment || !user) return;
     setSubmitting(true);
     try {
-      const { data: comment, error } = await supabase.from('comments').insert({
-        thread_id: threadId,
-        content: replyText.trim(),
-        created_by: user.id,
-      })
-        .select('id')
-        .single();
-      if (error) throw error;
-
       const mentionedIds = extractMentions(replyText);
-      if (mentionedIds.length > 0) {
-        const mentionRows = mentionedIds.map((userId) => ({
-          comment_id: comment.id,
-          user_id: userId,
-        }));
-        await supabase.from('mentions').insert(mentionRows);
-        await createMentionNotifications(mentionedIds, replyText.trim());
-      }
+      const { error } = await supabase.rpc('add_comment_with_mentions', {
+        p_experiment_id: currentExperiment.id,
+        p_thread_id: threadId,
+        p_content: replyText.trim(),
+        p_mentioned_user_ids: mentionedIds,
+      });
+      if (error) throw error;
 
       setReplyText('');
       setReplyingTo(null);

@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useExperimentStore } from '@/stores/experimentStore';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { useAuthStore } from '@/stores/authStore';
+import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import ExperimentHeader from '@/components/experiments/ExperimentHeader';
 import BlockEditor from '@/components/editor/BlockEditor';
 import DetailsPanel from '@/components/experiments/panels/DetailsPanel';
@@ -52,6 +51,7 @@ export default function ExperimentPage() {
   const { id } = useParams<{ id: string }>();
   const { currentExperiment, saving, lastSaved, loading, fetchExperiment } =
     useExperimentStore();
+  const capabilities = useExperimentCapabilities(currentExperiment);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<SidebarTab>('details');
@@ -90,12 +90,7 @@ export default function ExperimentPage() {
     );
   }
 
-  const { members } = useWorkspaceStore();
-  const { user } = useAuthStore();
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const isGuest = currentMember?.role === 'guest';
-
-  const readOnly = isGuest || !!currentExperiment.is_locked || !['draft', 'in_progress', 'changes_requested'].includes(currentExperiment.status);
+  const readOnly = capabilities.isReadOnly;
 
   const sidebarContent = (
     <Tabs

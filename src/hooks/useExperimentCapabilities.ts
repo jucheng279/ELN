@@ -97,28 +97,28 @@ export function useExperimentCapabilities(experiment: Experiment | null) {
           p_experiment_id: experiment.id,
         });
         if (cancelled || error || !data) return;
-        const d = data as Record<string, any>;
+        const d = data as Record<string, unknown>;
         if (d.error) return;
 
         setServerCaps({
-          canEditContent: d.can_edit_content ?? false,
-          canEditMetadata: d.can_edit_metadata ?? false,
-          canStart: d.can_start ?? false,
-          canComplete: d.can_complete ?? false,
-          canReopen: d.can_reopen ?? false,
-          canSubmitReview: d.can_submit_review ?? false,
-          canReview: d.can_review ?? false,
-          canRequestChanges: d.can_request_changes ?? false,
-          canApprove: d.can_approve ?? false,
-          canSign: d.can_sign ?? false,
-          canArchive: d.can_archive ?? false,
-          canRestore: d.can_restore ?? false,
-          canRestoreRevision: d.can_restore_revision ?? false,
-          canCreateAmendment: d.can_create_amendment ?? false,
-          canDuplicate: d.can_duplicate ?? false,
-          canComment: d.can_comment ?? false,
-          isReadOnly: d.is_read_only ?? true,
-          role: d.role ?? 'none',
+          canEditContent: !!d.can_edit_content,
+          canEditMetadata: !!d.can_edit_metadata,
+          canStart: !!d.can_start,
+          canComplete: !!d.can_complete,
+          canReopen: !!d.can_reopen,
+          canSubmitReview: !!d.can_submit_review,
+          canReview: !!d.can_review,
+          canRequestChanges: !!d.can_request_changes,
+          canApprove: !!d.can_approve,
+          canSign: !!d.can_sign,
+          canArchive: !!d.can_archive,
+          canRestore: !!d.can_restore,
+          canRestoreRevision: !!d.can_restore_revision,
+          canCreateAmendment: !!d.can_create_amendment,
+          canDuplicate: !!d.can_duplicate,
+          canComment: !!d.can_comment,
+          isReadOnly: d.is_read_only !== false,
+          role: (d.role as ExperimentCapabilities['role']) ?? 'none',
         });
       } catch {
         // Fall back to local derivation

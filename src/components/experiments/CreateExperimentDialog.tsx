@@ -38,7 +38,7 @@ export default function CreateExperimentDialog() {
   const navigate = useNavigate();
   const { createExperimentOpen: open, createExperimentDefaults: defaults, closeCreateExperiment: onClose } = useUIStore();
   const { createExperiment } = useExperimentStore();
-  const { notebooks, fetchFolders } = useNotebookStore();
+  const { notebooks } = useNotebookStore();
   const { currentWorkspace } = useWorkspaceStore();
 
   const [title, setTitle] = useState('');
@@ -96,7 +96,7 @@ export default function CreateExperimentDialog() {
         if (tvs) {
           // Group by template, keep latest published version
           const seen = new Map<string, TemplateOption>();
-          for (const tv of tvs as any[]) {
+          for (const tv of tvs as Array<{ template_id: string; template: unknown; id: string; version_number: number; content: unknown; metadata: unknown; status: string; published_at: string; created_by: string; created_at: string }>) {
             if (tv.template && !seen.has(tv.template_id)) {
               seen.set(tv.template_id, {
                 template: tv.template as Template,
@@ -143,8 +143,9 @@ export default function CreateExperimentDialog() {
       onClose();
       navigate(`/app/experiments/${experiment.id}`);
       toast.success('Experiment created');
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to create experiment');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create experiment';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -174,7 +175,7 @@ export default function CreateExperimentDialog() {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Notebook <span className="text-destructive">*</span></Label>
-              <Select value={notebookId} onValueChange={setNotebookId}>
+              <Select value={notebookId} onValueChange={(v) => setNotebookId(v ?? '')}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select notebook" />
                 </SelectTrigger>
@@ -187,7 +188,7 @@ export default function CreateExperimentDialog() {
             </div>
             <div className="space-y-1.5">
               <Label>Folder</Label>
-              <Select value={folderId} onValueChange={setFolderId} disabled={folders.length === 0}>
+              <Select value={folderId} onValueChange={(v) => setFolderId(v ?? '')} disabled={folders.length === 0}>
                 <SelectTrigger>
                   <SelectValue placeholder={folders.length === 0 ? 'No folders' : 'Select folder'} />
                 </SelectTrigger>

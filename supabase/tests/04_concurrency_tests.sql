@@ -81,20 +81,34 @@ SELECT throws_ok(
 );
 
 -- Test 4: Missing row_version rejected
-SELECT throws_ok(
-  $$ SELECT public.upsert_experiment_blocks(
-    current_setting('test.experiment_id')::uuid,
-    jsonb_build_array(jsonb_build_object(
-      'id', current_setting('test.block_id'),
-      'type', 'paragraph',
-      'content', '{"html":"no version"}'::jsonb,
-      'order_key', 'a0'
-    ))
-  ) $$,
-  NULL,
-  'row_version is required and must be > 0 for block %',
-  'Missing row_version rejected'
-);
+DO $
+DECLARE
+  v_block_id text := current_setting('test.block_id');
+BEGIN
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', current_setting('test.user_id'),
+    'role', 'authenticated'
+  )::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+
+  BEGIN
+    PERFORM public.upsert_experiment_blocks(
+      current_setting('test.experiment_id')::uuid,
+      jsonb_build_array(jsonb_build_object(
+        'id', v_block_id,
+        'type', 'paragraph',
+        'content', '{"html":"no version"}'::jsonb,
+        'order_key', 'a0'
+      ))
+    );
+    RAISE EXCEPTION 'Should have raised an error for missing row_version';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE 'row_version is required and must be > 0 for block%' THEN
+      RAISE EXCEPTION 'Unexpected error: %', SQLERRM;
+    END IF;
+  END;
+END $;
+SELECT pass('Missing row_version rejected');
 
 -- Test 5: Upsert returns authoritative server versions
 DO $$

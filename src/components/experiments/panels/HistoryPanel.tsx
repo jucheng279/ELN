@@ -206,7 +206,7 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
                 <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate">{(a.display_name as string) ?? (a.original_filename as string) ?? 'File'}</span>
                 {a.file_size != null && (
-                  <span className="shrink-0 text-xs text-muted-foreground">({formatBytes(a.file_size as number)})</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">({((a.file_size as number) / 1024).toFixed(1)} KB)</span>
                 )}
               </div>
             ))}

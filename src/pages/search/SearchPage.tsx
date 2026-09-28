@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -81,10 +81,10 @@ export default function SearchPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('relevance');
 
-  const inputRef = useState<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    (inputRef[0] as HTMLInputElement | null)?.focus();
+    inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -179,7 +179,7 @@ export default function SearchPage() {
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={20} />
             <Input
-              ref={(el) => { (inputRef as [HTMLInputElement | null])[0] = el; }}
+              ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}

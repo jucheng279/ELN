@@ -70,6 +70,9 @@ BEGIN
   v_exp_id := (v_result->>'id')::uuid;
   PERFORM set_config('test.experiment_id', v_exp_id::text, true);
 
+  -- Reset to superuser for catalog queries
+  PERFORM set_config('role', 'postgres', true);
+
   SELECT count(*), max(revision_number) INTO v_rev_count, v_rev_number
   FROM public.experiment_revisions WHERE experiment_id = v_exp_id;
 
@@ -87,11 +90,15 @@ SELECT pass('create_experiment_rpc produces revision v1 with content hash');
 
 -- ──────────────────────────────────────────────────────
 -- Test 3: Snapshot excludes status and row_version
+-- (Run as superuser — internal function is correctly denied to authenticated)
 -- ──────────────────────────────────────────────────────
 DO $$
 DECLARE
   v_snap jsonb;
 BEGIN
+  -- Ensure superuser context for internal function call
+  PERFORM set_config('role', 'postgres', true);
+
   v_snap := public._build_experiment_snapshot(current_setting('test.experiment_id')::uuid);
 
   IF v_snap ? 'status' THEN RAISE EXCEPTION 'Snapshot should NOT contain status'; END IF;
@@ -119,6 +126,8 @@ DECLARE
   v_hash1 text;
   v_hash2 text;
 BEGIN
+  PERFORM set_config('role', 'postgres', true);
+
   v_snap1 := public._build_experiment_snapshot(current_setting('test.experiment_id')::uuid);
   v_hash1 := encode(sha256(convert_to(v_snap1::text, 'UTF8')), 'hex');
 
@@ -140,6 +149,8 @@ DECLARE
   v_hash_after text;
   v_exp_id uuid := current_setting('test.experiment_id')::uuid;
 BEGIN
+  PERFORM set_config('role', 'postgres', true);
+
   v_hash_before := encode(sha256(convert_to(
     (public._build_experiment_snapshot(v_exp_id))::text, 'UTF8'
   )), 'hex');
@@ -184,6 +195,7 @@ SELECT pass('Checkpoint creates revision v2');
 -- ──────────────────────────────────────────────────────
 DO $$
 BEGIN
+  PERFORM set_config('role', 'postgres', true);
   UPDATE public.experiments SET status = 'completed'
   WHERE id = current_setting('test.experiment_id')::uuid;
 END $$;
@@ -197,6 +209,7 @@ SELECT throws_ok(
 
 -- Reset to editable for further tests
 DO $$ BEGIN
+  PERFORM set_config('role', 'postgres', true);
   UPDATE public.experiments SET status = 'in_progress'
   WHERE id = current_setting('test.experiment_id')::uuid;
 END $$;
@@ -207,6 +220,8 @@ END $$;
 DO $$
 DECLARE v_other_nb uuid := gen_random_uuid();
 BEGIN
+  PERFORM set_config('role', 'postgres', true);
+
   INSERT INTO public.workspaces (id, name, created_by)
   VALUES (gen_random_uuid(), 'Other WS', current_setting('test.user_id')::uuid);
 
@@ -217,6 +232,13 @@ BEGIN
     current_setting('test.user_id')::uuid);
 
   PERFORM set_config('test.other_notebook_id', v_other_nb::text, true);
+
+  -- Switch back to authenticated for the test
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', current_setting('test.user_id'),
+    'role', 'authenticated'
+  )::text, true);
+  PERFORM set_config('role', 'authenticated', true);
 END $$;
 
 SELECT throws_ok(

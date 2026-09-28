@@ -4,10 +4,12 @@ import { FlaskRound, Plus } from 'lucide-react';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useUIStore } from '@/stores/uiStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
 import PageHeader from '@/components/eln/PageHeader';
 import EmptyState from '@/components/eln/EmptyState';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 export default function MyExperimentsPage() {
   const navigate = useNavigate();
@@ -15,6 +17,7 @@ export default function MyExperimentsPage() {
   const { currentWorkspace } = useWorkspaceStore();
   const { experiments, loading, fetchExperiments, toggleFavorite, archiveExperiment, duplicateExperiment } =
     useExperimentStore();
+  const openCreateExperiment = useUIStore((s) => s.openCreateExperiment);
 
   useEffect(() => {
     if (currentWorkspace && user) {
@@ -45,10 +48,14 @@ export default function MyExperimentsPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'duplicate':
-        duplicateExperiment(exp.id);
+        duplicateExperiment(exp.id)
+          .then(() => toast.success('Experiment duplicated'))
+          .catch(() => toast.error('Failed to duplicate experiment'));
         break;
       case 'archive':
-        archiveExperiment(exp.id);
+        archiveExperiment(exp.id)
+          .then(() => toast.success('Experiment archived'))
+          .catch(() => toast.error('Failed to archive experiment'));
         break;
     }
   }
@@ -64,14 +71,14 @@ export default function MyExperimentsPage() {
 
       <div className="flex-1 overflow-auto">
         {loading && myExperiments.length === 0 ? (
-          <div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>
+          <div className="py-16 text-center text-sm text-muted-foreground">Loading...</div>
         ) : myExperiments.length === 0 ? (
           <EmptyState
             icon={FlaskRound}
             title="No experiments yet"
             description="Experiments you create will appear here."
             action={
-              <Button size="sm" onClick={() => navigate('/app')}>
+              <Button size="sm" onClick={() => openCreateExperiment()}>
                 <Plus size={15} />
                 Create experiment
               </Button>

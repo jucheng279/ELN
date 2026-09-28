@@ -11,10 +11,12 @@ import {
   AtSign,
   Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import type { CommentThread, Comment, Profile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -37,6 +39,7 @@ export default function CommentsPanel() {
   const { currentExperiment } = useExperimentStore();
   const { members, fetchMembers } = useWorkspaceStore();
   const { user } = useAuthStore();
+  const caps = useExperimentCapabilities(currentExperiment);
 
   const [threads, setThreads] = useState<CommentThread[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,8 +83,8 @@ export default function CommentsPanel() {
       })) as CommentThread[];
 
       setThreads(sorted);
-    } catch (err) {
-      console.error('Failed to fetch threads:', err);
+    } catch {
+      // Thread fetch failure is non-critical; the panel shows empty state
     } finally {
       setLoading(false);
     }
@@ -153,8 +156,8 @@ export default function CommentsPanel() {
 
       setNewComment('');
       await fetchThreads();
-    } catch (err) {
-      console.error('Failed to create comment:', err);
+    } catch {
+      toast.error('Failed to create comment');
     } finally {
       setSubmitting(false);
     }
@@ -176,8 +179,8 @@ export default function CommentsPanel() {
       setReplyText('');
       setReplyingTo(null);
       await fetchThreads();
-    } catch (err) {
-      console.error('Failed to reply:', err);
+    } catch {
+      toast.error('Failed to reply');
     } finally {
       setSubmitting(false);
     }
@@ -195,8 +198,8 @@ export default function CommentsPanel() {
         })
         .eq('id', thread.id);
       await fetchThreads();
-    } catch (err) {
-      console.error('Failed to toggle resolve:', err);
+    } catch {
+      toast.error('Failed to update thread');
     }
   };
 
@@ -221,45 +224,49 @@ export default function CommentsPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* New comment form */}
-      <div className="border-b p-3">
-        <div className="relative">
-          <Textarea
-            ref={newCommentRef}
-            value={newComment}
-            onChange={(e) =>
-              handleTextChange(e.target.value, setNewComment, 'new')
-            }
-            placeholder="Add a comment… (use @ to mention)"
-            rows={2}
-            className="min-h-0 resize-none text-sm"
-          />
-          {mentionQuery !== null &&
-            mentionResults.length > 0 &&
-            activeInput === 'new' && (
-              <MentionDropdown
-                results={mentionResults}
-                onSelect={insertMention}
-              />
-            )}
+      {caps.canComment ? (
+        <div className="border-b p-3">
+          <div className="relative">
+            <Textarea
+              ref={newCommentRef}
+              value={newComment}
+              onChange={(e) =>
+                handleTextChange(e.target.value, setNewComment, 'new')
+              }
+              placeholder="Add a comment… (use @ to mention)"
+              rows={2}
+              className="min-h-0 resize-none text-sm"
+            />
+            {mentionQuery !== null &&
+              mentionResults.length > 0 &&
+              activeInput === 'new' && (
+                <MentionDropdown
+                  results={mentionResults}
+                  onSelect={insertMention}
+                />
+              )}
+          </div>
+          <div className="mt-1.5 flex justify-end">
+            <Button
+              size="sm"
+              disabled={!newComment.trim() || submitting}
+              onClick={handleNewComment}
+            >
+              {submitting && !replyingTo ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Comment
+            </Button>
+          </div>
         </div>
-        <div className="mt-1.5 flex justify-end">
-          <Button
-            size="sm"
-            disabled={!newComment.trim() || submitting}
-            onClick={handleNewComment}
-          >
-            {submitting && !replyingTo ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Send className="h-3.5 w-3.5" />
-            )}
-            Comment
-          </Button>
+      ) : (
+        <div className="border-b px-3 py-2">
+          <p className="text-xs text-muted-foreground">Comments are read-only</p>
         </div>
-      </div>
+      )}
 
-      {/* Threads */}
       <div className="flex-1 overflow-auto">
         {openThreads.length === 0 && resolvedThreads.length === 0 && (
           <EmptyState
@@ -270,12 +277,12 @@ export default function CommentsPanel() {
           />
         )}
 
-        {/* Open threads */}
         <div className="divide-y">
           {openThreads.map((thread) => (
             <ThreadCard
               key={thread.id}
               thread={thread}
+              canComment={caps.canComment}
               replyingTo={replyingTo}
               replyText={replyText}
               submitting={submitting}
@@ -293,7 +300,6 @@ export default function CommentsPanel() {
           ))}
         </div>
 
-        {/* Resolved threads */}
         {resolvedThreads.length > 0 && (
           <div className="border-t">
             <button
@@ -317,6 +323,7 @@ export default function CommentsPanel() {
                   <ThreadCard
                     key={thread.id}
                     thread={thread}
+                    canComment={caps.canComment}
                     replyingTo={replyingTo}
                     replyText={replyText}
                     submitting={submitting}
@@ -340,8 +347,6 @@ export default function CommentsPanel() {
     </div>
   );
 }
-
-/* ── Mention dropdown ──────────────────────────── */
 
 function MentionDropdown({
   results,
@@ -367,10 +372,9 @@ function MentionDropdown({
   );
 }
 
-/* ── Thread card ───────────────────────────────── */
-
 interface ThreadCardProps {
   thread: CommentThread;
+  canComment: boolean;
   replyingTo: string | null;
   replyText: string;
   submitting: boolean;
@@ -386,6 +390,7 @@ interface ThreadCardProps {
 
 function ThreadCard({
   thread,
+  canComment,
   replyingTo,
   replyText,
   submitting,
@@ -432,38 +437,38 @@ function ThreadCard({
         </div>
       ))}
 
-      {/* Actions */}
-      <div className="mt-2 flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground"
-          onClick={() => onSetReplyingTo(isReplying ? null : thread.id)}
-        >
-          <Reply className="h-3 w-3" />
-          Reply
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground"
-          onClick={() => onToggleResolve(thread)}
-        >
-          {thread.is_resolved ? (
-            <>
-              <CircleDot className="h-3 w-3" />
-              Reopen
-            </>
-          ) : (
-            <>
-              <CheckCircle2 className="h-3 w-3" />
-              Resolve
-            </>
-          )}
-        </Button>
-      </div>
+      {canComment && (
+        <div className="mt-2 flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => onSetReplyingTo(isReplying ? null : thread.id)}
+          >
+            <Reply className="h-3 w-3" />
+            Reply
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => onToggleResolve(thread)}
+          >
+            {thread.is_resolved ? (
+              <>
+                <CircleDot className="h-3 w-3" />
+                Reopen
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="h-3 w-3" />
+                Resolve
+              </>
+            )}
+          </Button>
+        </div>
+      )}
 
-      {/* Reply input */}
       {isReplying && (
         <div className="relative mt-2 ml-6">
           <Textarea

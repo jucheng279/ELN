@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import type { Review, Signature } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -61,6 +62,7 @@ export default function ReviewPanel() {
   } = useExperimentStore();
   const { members, fetchMembers } = useWorkspaceStore();
   const { user } = useAuthStore();
+  const caps = useExperimentCapabilities(currentExperiment);
   const nav = useNavigate();
 
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -117,7 +119,6 @@ export default function ReviewPanel() {
   const exp = currentExperiment;
   const isAuthor = user?.id === exp.created_by;
   const latestReview = reviews[0] ?? null;
-  const isReviewer = user?.id === latestReview?.reviewer_id;
   const pendingReview = latestReview?.status === 'pending' ? latestReview : null;
 
   const runAction = async (fn: () => Promise<unknown>, successMsg: string, cleanup?: () => void) => {
@@ -216,14 +217,12 @@ export default function ReviewPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 space-y-3 overflow-auto p-3">
-        {/* Current status */}
         <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
           <span className="text-xs text-muted-foreground">Status</span>
           <ExperimentStatusBadge status={exp.status} />
         </div>
 
-        {/* Submit for review (completed or changes_requested) */}
-        {['completed', 'changes_requested'].includes(exp.status) && isAuthor && (
+        {['completed', 'changes_requested'].includes(exp.status) && caps.canSubmitReview && (
           <div className="rounded-lg bg-muted/50 px-3 py-3">
             <p className="text-xs text-muted-foreground">
               {exp.status === 'changes_requested'
@@ -250,7 +249,6 @@ export default function ReviewPanel() {
           </div>
         )}
 
-        {/* In review */}
         {exp.status === 'in_review' && pendingReview && (
           <div className="space-y-3">
             <div className="divide-y divide-border rounded-lg bg-muted/50 px-3 py-1">
@@ -268,18 +266,22 @@ export default function ReviewPanel() {
               </div>
             </div>
 
-            {isReviewer && (
+            {(caps.canApprove || caps.canRequestChanges) && (
               <div className="space-y-2">
-                <Button size="sm" className="w-full" disabled={submitting} onClick={() => setShowApproveDialog(true)}>
-                  <CheckCircle className="h-3.5 w-3.5" /> Approve
-                </Button>
-                <Button variant="outline" size="sm" className="w-full" onClick={() => setShowFeedbackDialog(true)}>
-                  <AlertCircle className="h-3.5 w-3.5" /> Request changes
-                </Button>
+                {caps.canApprove && (
+                  <Button size="sm" className="w-full" disabled={submitting} onClick={() => setShowApproveDialog(true)}>
+                    <CheckCircle className="h-3.5 w-3.5" /> Approve
+                  </Button>
+                )}
+                {caps.canRequestChanges && (
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => setShowFeedbackDialog(true)}>
+                    <AlertCircle className="h-3.5 w-3.5" /> Request changes
+                  </Button>
+                )}
               </div>
             )}
 
-            {isAuthor && !isReviewer && (
+            {isAuthor && !caps.canApprove && !caps.canRequestChanges && (
               <div className={cn('flex items-center gap-2 rounded-lg px-3 py-2 bg-amber-50 dark:bg-amber-950/30')}>
                 <Clock className="h-3.5 w-3.5 text-amber-600" />
                 <span className="text-xs text-amber-700 dark:text-amber-400">Waiting for reviewer's decision</span>
@@ -288,7 +290,6 @@ export default function ReviewPanel() {
           </div>
         )}
 
-        {/* Approved */}
         {exp.status === 'approved' && (
           <div className="space-y-3">
             <div className={cn('rounded-lg px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30')}>
@@ -302,13 +303,14 @@ export default function ReviewPanel() {
                 </p>
               )}
             </div>
-            <Button size="sm" className="w-full" onClick={() => setShowSignDialog(true)}>
-              <Shield className="h-3.5 w-3.5" /> Sign and lock
-            </Button>
+            {caps.canSign && (
+              <Button size="sm" className="w-full" onClick={() => setShowSignDialog(true)}>
+                <Shield className="h-3.5 w-3.5" /> Sign and lock
+              </Button>
+            )}
           </div>
         )}
 
-        {/* Locked */}
         {exp.status === 'locked' && signature && (
           <div className="space-y-3">
             <div className="rounded-lg bg-muted px-3 py-2 space-y-1.5">
@@ -333,13 +335,14 @@ export default function ReviewPanel() {
               <Separator />
               <p className="pt-1 text-[10px] italic text-muted-foreground">{signature.declaration}</p>
             </div>
-            <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAmendDialog(true)}>
-              <PenLine className="h-3.5 w-3.5" /> Create amendment
-            </Button>
+            {caps.canCreateAmendment && (
+              <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAmendDialog(true)}>
+                <PenLine className="h-3.5 w-3.5" /> Create amendment
+              </Button>
+            )}
           </div>
         )}
 
-        {/* Review history */}
         {reviews.length > 1 && (
           <>
             <Separator />
@@ -364,7 +367,6 @@ export default function ReviewPanel() {
         )}
       </div>
 
-      {/* Submit for review dialog */}
       <Dialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Submit for review</DialogTitle></DialogHeader>
@@ -392,7 +394,6 @@ export default function ReviewPanel() {
         </DialogContent>
       </Dialog>
 
-      {/* Approve dialog */}
       <AlertDialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -410,7 +411,6 @@ export default function ReviewPanel() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Request changes dialog */}
       <Dialog open={showFeedbackDialog} onOpenChange={setShowFeedbackDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Request changes</DialogTitle></DialogHeader>
@@ -427,7 +427,6 @@ export default function ReviewPanel() {
         </DialogContent>
       </Dialog>
 
-      {/* Sign & lock dialog */}
       <AlertDialog open={showSignDialog} onOpenChange={setShowSignDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -450,7 +449,6 @@ export default function ReviewPanel() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Amendment dialog */}
       <AlertDialog open={showAmendDialog} onOpenChange={setShowAmendDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

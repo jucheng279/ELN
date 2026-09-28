@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock } from 'lucide-react';
+import { toast } from 'sonner';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
@@ -53,10 +54,14 @@ export default function RecentPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'duplicate':
-        duplicateExperiment(exp.id);
+        duplicateExperiment(exp.id)
+          .then(() => toast.success('Experiment duplicated'))
+          .catch(() => toast.error('Failed to duplicate experiment'));
         break;
       case 'archive':
-        archiveExperiment(exp.id);
+        archiveExperiment(exp.id)
+          .then(() => toast.success('Experiment archived'))
+          .catch(() => toast.error('Failed to archive experiment'));
         break;
     }
   }
@@ -65,8 +70,8 @@ export default function RecentPage() {
     <div className="h-full flex flex-col">
       <div className="border-b px-6 py-3">
         <PageHeader
-          title="Recent"
-          description="Recently modified experiments"
+          title="Recently modified"
+          description="Experiments recently modified across your workspace"
         />
       </div>
 

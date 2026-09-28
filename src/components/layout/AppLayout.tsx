@@ -22,6 +22,10 @@ import { useNotebookStore } from '@/stores/notebookStore';
 import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import NotificationCenter from '@/components/notifications/NotificationCenter';
+import { lazy, Suspense } from 'react';
+
+const CommandPalette = lazy(() => import('@/components/CommandPalette'));
+const CreateExperimentDialog = lazy(() => import('@/components/experiments/CreateExperimentDialog'));
 
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -536,6 +540,10 @@ export default function AppLayout() {
           </main>
         </div>
       </div>
+      <Suspense fallback={null}>
+        <CommandPalette />
+        <CreateExperimentDialog />
+      </Suspense>
     </TooltipProvider>
   );
 }

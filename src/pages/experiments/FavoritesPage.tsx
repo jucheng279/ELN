@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star } from 'lucide-react';
+import { toast } from 'sonner';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
@@ -52,10 +53,14 @@ export default function FavoritesPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'duplicate':
-        duplicateExperiment(exp.id);
+        duplicateExperiment(exp.id)
+          .then(() => toast.success('Experiment duplicated'))
+          .catch(() => toast.error('Failed to duplicate experiment'));
         break;
       case 'archive':
-        archiveExperiment(exp.id);
+        archiveExperiment(exp.id)
+          .then(() => toast.success('Experiment archived'))
+          .catch(() => toast.error('Failed to archive experiment'));
         break;
     }
   }

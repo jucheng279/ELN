@@ -81,7 +81,7 @@ SELECT throws_ok(
 );
 
 -- Test 4: Missing row_version rejected
-DO $
+DO $$
 DECLARE
   v_block_id text := current_setting('test.block_id');
 BEGIN
@@ -107,7 +107,7 @@ BEGIN
       RAISE EXCEPTION 'Unexpected error: %', SQLERRM;
     END IF;
   END;
-END $;
+END $$;
 SELECT pass('Missing row_version rejected');
 
 -- Test 5: Upsert returns authoritative server versions

@@ -77,14 +77,14 @@ SELECT ok(
 );
 
 -- Test 3: Notification created for mentioned user (switch to user2 to respect RLS)
-DO $
+DO $$
 BEGIN
   PERFORM set_config('request.jwt.claims', jsonb_build_object(
     'sub', current_setting('test.user2_id'),
     'role', 'authenticated'
   )::text, true);
   PERFORM set_config('role', 'authenticated', true);
-END $;
+END $$;
 
 SELECT ok(
   EXISTS (

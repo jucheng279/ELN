@@ -228,6 +228,9 @@ interface ExperimentActions {
   setFilters: (filters: Partial<ExperimentFilters>) => void;
   clearFilters: () => void;
 
+  retryPendingSave: () => Promise<void>;
+  reloadFromServer: () => Promise<void>;
+  hasPendingChanges: () => boolean;
   initSession: (experimentId: string) => void;
   teardownSession: () => Promise<void>;
 }
@@ -257,6 +260,31 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   _setSaving: (saving) => set({ saving }),
   _setSaveState: (saveState) => set({ saveState, saving: saveState === 'saving' }),
   _setLastSaved: (date) => set({ lastSaved: date }),
+
+  retryPendingSave: async () => {
+    if (pendingBlockChanges.size === 0 && !activeSavePromise) return;
+    try {
+      await flushPendingBlocks({ throwOnError: true });
+    } catch {
+      // State already set by flushPendingBlocks
+    }
+  },
+
+  reloadFromServer: async () => {
+    const expId = activeExperimentId;
+    if (!expId) return;
+    pendingBlockChanges.clear();
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    activeSavePromise = null;
+    const state = useExperimentStore.getState();
+    state._setSaveState('clean');
+    await state.fetchExperiment(expId);
+  },
+
+  hasPendingChanges: () => {
+    return pendingBlockChanges.size > 0 || activeSavePromise !== null;
+  },
 
   initSession: (experimentId) => { void startAutosaveSession(experimentId); },
   teardownSession: async () => {

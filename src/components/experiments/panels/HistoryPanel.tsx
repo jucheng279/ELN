@@ -16,8 +16,10 @@ import {
   Paperclip,
   FlaskConical,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
+import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import type { ExperimentRevision, AuditEvent, BlockType, BlockContent } from '@/lib/types';
 import ReadonlyBlockRenderer from '@/components/editor/ReadonlyBlockRenderer';
 import { Button } from '@/components/ui/button';
@@ -108,7 +110,6 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
 
   return (
     <div className="space-y-5">
-      {/* Experiment header info */}
       <div className="space-y-2">
         {title && (
           <h2 className="text-xl font-semibold text-foreground">{title}</h2>
@@ -153,7 +154,6 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
 
       <Separator />
 
-      {/* Blocks */}
       {blocks.length > 0 && (
         <div className="space-y-3">
           {blocks
@@ -171,7 +171,6 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
         <p className="text-sm italic text-muted-foreground">No content blocks in this snapshot.</p>
       )}
 
-      {/* Protocols section */}
       {protocols.length > 0 && (
         <>
           <Separator />
@@ -192,7 +191,6 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
         </>
       )}
 
-      {/* Attachments section */}
       {attachments.length > 0 && (
         <>
           <Separator />
@@ -221,6 +219,7 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
 
 export default function HistoryPanel() {
   const { currentExperiment, createRevision, fetchExperiment } = useExperimentStore();
+  const caps = useExperimentCapabilities(currentExperiment);
 
   const [revisions, setRevisions] = useState<ExperimentRevision[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -255,8 +254,8 @@ export default function HistoryPanel() {
           setRevisions((prev) => [...prev, ...fetched]);
         }
         setHasMore(fetched.length === PAGE_SIZE);
-      } catch (err) {
-        console.error('Failed to fetch revisions:', err);
+      } catch {
+        toast.error('Failed to load revisions');
       } finally {
         setLoadingRevisions(false);
       }
@@ -280,8 +279,8 @@ export default function HistoryPanel() {
 
       if (error) throw error;
       setAuditEvents((data ?? []) as AuditEvent[]);
-    } catch (err) {
-      console.error('Failed to fetch audit events:', err);
+    } catch {
+      toast.error('Failed to load revisions');
     } finally {
       setLoadingAudit(false);
     }
@@ -301,8 +300,9 @@ export default function HistoryPanel() {
         'Manual checkpoint',
       );
       await fetchRevisions();
-    } catch (err) {
-      console.error('Failed to create checkpoint:', err);
+      toast.success('Checkpoint created');
+    } catch {
+      toast.error('Failed to create checkpoint');
     } finally {
       setCreating(false);
     }
@@ -321,8 +321,9 @@ export default function HistoryPanel() {
       await fetchExperiment(currentExperiment.id);
       await fetchRevisions();
       setViewingRevision(null);
-    } catch (err) {
-      console.error('Failed to restore revision:', err);
+      toast.success('Revision restored');
+    } catch {
+      toast.error('Failed to restore revision');
     } finally {
       setRestoring(false);
     }
@@ -339,7 +340,7 @@ export default function HistoryPanel() {
           variant="outline"
           size="sm"
           className="w-full"
-          disabled={currentExperiment?.is_locked || creating}
+          disabled={!caps.canRestoreRevision || creating}
           onClick={handleCreateCheckpoint}
         >
           {creating ? (
@@ -556,7 +557,7 @@ export default function HistoryPanel() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={currentExperiment?.is_locked || restoring}
+                disabled={!caps.canRestoreRevision || restoring}
                 onClick={handleRestore}
               >
                 {restoring ? (

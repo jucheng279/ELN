@@ -180,9 +180,27 @@ export default function ExperimentHeader({
           {saveState === 'saving' ? (
             <><Loader2 className="h-3 w-3 animate-spin" /><span>Saving...</span></>
           ) : saveState === 'error' ? (
-            <><Clock className="h-3 w-3 text-red-500" /><span className="text-red-600">Save failed</span></>
+            <span className="flex items-center gap-1.5">
+              <Clock className="h-3 w-3 text-red-500" />
+              <span className="text-red-600">Save failed</span>
+              <button
+                onClick={() => void useExperimentStore.getState().retryPendingSave()}
+                className="ml-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+              >
+                Retry
+              </button>
+            </span>
           ) : saveState === 'conflict' ? (
-            <><Clock className="h-3 w-3 text-amber-500" /><span className="text-amber-600">Conflict</span></>
+            <span className="flex items-center gap-1.5">
+              <Clock className="h-3 w-3 text-amber-500" />
+              <span className="text-amber-600">Changed elsewhere</span>
+              <button
+                onClick={() => void useExperimentStore.getState().reloadFromServer()}
+                className="ml-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+              >
+                Reload latest
+              </button>
+            </span>
           ) : saveState === 'dirty' ? (
             <><Clock className="h-3 w-3 text-amber-500" /><span className="text-amber-600">Unsaved</span></>
           ) : lastSaved ? (

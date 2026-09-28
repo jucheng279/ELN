@@ -2,8 +2,7 @@ import { format } from 'date-fns';
 import {
   Star,
   MoreHorizontal,
-  Eye,
-  Pencil,
+  ArrowRight,
   Copy,
   Archive,
   ArchiveRestore,
@@ -222,12 +221,8 @@ export default function ExperimentTable({
                     </Tooltip>
                     <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenuItem onClick={() => onRowAction?.('view', exp)}>
-                        <Eye size={14} />
-                        View
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onRowAction?.('edit', exp)}>
-                        <Pencil size={14} />
-                        Edit
+                        <ArrowRight size={14} />
+                        Open
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => onRowAction?.('duplicate', exp)}>
                         <Copy size={14} />

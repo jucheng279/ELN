@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  FileText, LayoutTemplate, ChevronRight, Loader2, Blocks,
+  FileText, LayoutTemplate, ChevronRight, Loader2, Blocks, RefreshCw,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -50,6 +50,7 @@ export default function CreateExperimentDialog() {
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateOption | null>(null);
   const [loading, setLoading] = useState(false);
   const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -58,6 +59,7 @@ export default function CreateExperimentDialog() {
       setFolderId('');
       setMode('blank');
       setSelectedTemplate(null);
+      setTemplatesError(null);
       setNotebookId(defaults.notebookId || '');
     }
   }, [open, defaults]);
@@ -75,54 +77,65 @@ export default function CreateExperimentDialog() {
         .select('*')
         .eq('notebook_id', notebookId)
         .order('order_key');
-      setFolders((data ?? []) as Folder[]);
-      setFolderId('');
+      const newFolders = (data ?? []) as Folder[];
+      setFolders(newFolders);
+      // Clear folderId if the currently selected folder doesn't belong to the new notebook
+      setFolderId((prev) => {
+        if (!prev) return '';
+        const stillValid = newFolders.some((f) => f.id === prev);
+        return stillValid ? prev : '';
+      });
     })();
   }, [notebookId]);
 
   // Fetch published templates when workspace is set
+  const fetchTemplates = useCallback(async () => {
+    if (!currentWorkspace) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    try {
+      const { data: tvs } = await supabase
+        .from('template_versions')
+        .select('*, template:templates(*)')
+        .eq('status', 'published')
+        .eq('template:templates.workspace_id', currentWorkspace.id)
+        .order('published_at', { ascending: false });
+      
+      if (tvs) {
+        // Group by template, keep latest published version
+        const seen = new Map<string, TemplateOption>();
+        for (const tv of tvs as Array<{ template_id: string; template: unknown; id: string; version_number: number; content: unknown; metadata: unknown; status: string; published_at: string; created_by: string; created_at: string }>) {
+          if (tv.template && !seen.has(tv.template_id)) {
+            seen.set(tv.template_id, {
+              template: tv.template as Template,
+              version: {
+                id: tv.id,
+                template_id: tv.template_id,
+                version_number: tv.version_number,
+                content: tv.content,
+                metadata: tv.metadata,
+                status: tv.status,
+                published_at: tv.published_at,
+                created_by: tv.created_by,
+                created_at: tv.created_at,
+              } as TemplateVersion,
+            });
+          }
+        }
+        setTemplates(Array.from(seen.values()));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load templates';
+      setTemplatesError(message);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [currentWorkspace]);
+
   useEffect(() => {
     if (!open || !currentWorkspace) return;
-    (async () => {
-      setTemplatesLoading(true);
-      try {
-        const { data: tvs } = await supabase
-          .from('template_versions')
-          .select('*, template:templates(*)')
-          .eq('status', 'published')
-          .eq('template:templates.workspace_id', currentWorkspace.id)
-          .order('published_at', { ascending: false });
-        
-        if (tvs) {
-          // Group by template, keep latest published version
-          const seen = new Map<string, TemplateOption>();
-          for (const tv of tvs as Array<{ template_id: string; template: unknown; id: string; version_number: number; content: unknown; metadata: unknown; status: string; published_at: string; created_by: string; created_at: string }>) {
-            if (tv.template && !seen.has(tv.template_id)) {
-              seen.set(tv.template_id, {
-                template: tv.template as Template,
-                version: {
-                  id: tv.id,
-                  template_id: tv.template_id,
-                  version_number: tv.version_number,
-                  content: tv.content,
-                  metadata: tv.metadata,
-                  status: tv.status,
-                  published_at: tv.published_at,
-                  created_by: tv.created_by,
-                  created_at: tv.created_at,
-                } as TemplateVersion,
-              });
-            }
-          }
-          setTemplates(Array.from(seen.values()));
-        }
-      } catch {
-        // Templates optional
-      } finally {
-        setTemplatesLoading(false);
-      }
-    })();
-  }, [open, currentWorkspace]);
+    fetchTemplates();
+  }, [open, currentWorkspace, fetchTemplates]);
 
   const handleCreate = useCallback(async () => {
     if (!notebookId) {
@@ -188,11 +201,16 @@ export default function CreateExperimentDialog() {
             </div>
             <div className="space-y-1.5">
               <Label>Folder</Label>
-              <Select value={folderId} onValueChange={(v) => setFolderId(v ?? '')} disabled={folders.length === 0}>
+              <Select
+                value={folderId || '__none__'}
+                onValueChange={(v) => setFolderId(!v || v === '__none__' ? '' : v)}
+                disabled={folders.length === 0}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={folders.length === 0 ? 'No folders' : 'Select folder'} />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem key="__none__" value="__none__">No folder</SelectItem>
                   {folders.map((f) => (
                     <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                   ))}
@@ -244,6 +262,19 @@ export default function CreateExperimentDialog() {
               {templatesLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : templatesError ? (
+                <div className="rounded-lg border border-dashed border-destructive/50 px-4 py-8 text-center">
+                  <LayoutTemplate className="mx-auto h-8 w-8 text-destructive/50 mb-2" />
+                  <p className="text-sm text-destructive mb-3">Failed to load templates</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchTemplates}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Retry
+                  </Button>
                 </div>
               ) : templates.length === 0 ? (
                 <div className="rounded-lg border border-dashed px-4 py-8 text-center">

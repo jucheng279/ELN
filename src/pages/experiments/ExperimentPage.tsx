@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useBlocker } from 'react-router-dom';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import ExperimentHeader from '@/components/experiments/ExperimentHeader';
@@ -31,7 +31,18 @@ import {
   History,
   FileCheck,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 
 type SidebarTab = 'details' | 'comments' | 'history' | 'review';
@@ -56,6 +67,17 @@ export default function ExperimentPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<SidebarTab>('details');
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+
+  const shouldBlock = saveState === 'error' || saveState === 'conflict' || saveState === 'dirty';
+
+  const blocker = useBlocker(shouldBlock);
+
+  useEffect(() => {
+    if (!shouldBlock) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [shouldBlock]);
 
   useEffect(() => {
     if (id) {
@@ -238,6 +260,38 @@ export default function ExperimentPage() {
           </Sheet>
         </div>
       </div>
+
+      {blocker.state === 'blocked' && (
+        <AlertDialog open onOpenChange={() => blocker.reset()}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                Unsaved changes
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {saveState === 'error'
+                  ? 'Your latest changes failed to save. Leaving now will discard them.'
+                  : saveState === 'conflict'
+                    ? 'This experiment was changed elsewhere. Leaving now will discard your local edits.'
+                    : 'You have unsaved changes that will be lost if you leave.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => blocker.reset()}>Stay</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  useExperimentStore.getState().reloadFromServer();
+                  blocker.proceed();
+                }}
+              >
+                Discard and leave
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }

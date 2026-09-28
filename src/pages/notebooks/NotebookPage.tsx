@@ -6,19 +6,13 @@ import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useNotebookStore } from '@/stores/notebookStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { Notebook } from '@/lib/types';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
 import EmptyState from '@/components/eln/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -29,6 +23,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export default function NotebookPage() {
@@ -36,16 +31,13 @@ export default function NotebookPage() {
   const navigate = useNavigate();
   const { currentWorkspace } = useWorkspaceStore();
   const { notebooks, updateNotebook, archiveNotebook } = useNotebookStore();
-  const { experiments, loading, fetchExperiments, createExperiment } = useExperimentStore();
+  const { experiments, loading, fetchExperiments, duplicateExperiment, archiveExperiment } = useExperimentStore();
+  const openCreateExperiment = useUIStore((s) => s.openCreateExperiment);
 
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [createLoading, setCreateLoading] = useState(false);
-  const [error, setError] = useState('');
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 
   useEffect(() => {
@@ -91,8 +83,9 @@ export default function NotebookPage() {
     try {
       await updateNotebook(id, { name: editName.trim(), description: editDesc.trim() || undefined });
       setEditing(false);
+      toast.success('Notebook updated');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to update notebook');
+      toast.error(err instanceof Error ? err.message : 'Failed to update notebook');
     }
   }, [id, editName, editDesc, updateNotebook]);
 
@@ -100,24 +93,31 @@ export default function NotebookPage() {
     if (!id) return;
     try {
       await archiveNotebook(id);
+      toast.success('Notebook archived');
       navigate('/app');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to archive notebook');
+      toast.error(err instanceof Error ? err.message : 'Failed to archive notebook');
     }
   }, [id, archiveNotebook, navigate]);
 
-  const handleCreate = useCallback(async () => {
-    if (!currentWorkspace || !id) return;
-    setCreateLoading(true);
-    try {
-      const exp = await createExperiment(currentWorkspace.id, id, newTitle || undefined);
-      navigate(`/app/experiments/${exp.id}`);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create experiment');
-    } finally {
-      setCreateLoading(false);
+  function handleRowClick(exp: { id: string }) {
+    navigate(`/app/experiments/${exp.id}`);
+  }
+
+  function handleRowAction(action: string, exp: { id: string }) {
+    switch (action) {
+      case 'view':
+      case 'edit':
+        navigate(`/app/experiments/${exp.id}`);
+        break;
+      case 'duplicate':
+        duplicateExperiment(exp.id).then(() => toast.success('Experiment duplicated')).catch(() => toast.error('Failed to duplicate'));
+        break;
+      case 'archive':
+        archiveExperiment(exp.id).then(() => toast.success('Experiment archived')).catch(() => toast.error('Failed to archive'));
+        break;
     }
-  }, [currentWorkspace, id, newTitle, createExperiment, navigate]);
+  }
 
   if (!notebook) {
     return (
@@ -183,17 +183,13 @@ export default function NotebookPage() {
               <Button size="sm" variant="ghost" onClick={() => setShowArchiveConfirm(true)}>
                 <Archive className={cn('mr-1 h-3.5 w-3.5')} /> Archive
               </Button>
-              <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Button size="sm" onClick={() => openCreateExperiment({ notebookId: id })}>
                 <Plus className={cn('mr-1 h-3.5 w-3.5')} /> New Experiment
               </Button>
             </>
           )}
         </div>
       </div>
-
-      {error && (
-        <div className={cn('mb-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive')}>{error}</div>
-      )}
 
       {/* Experiment list */}
       {loading ? (
@@ -206,7 +202,7 @@ export default function NotebookPage() {
           title="No experiments in this notebook"
           description="Create your first experiment to get started."
           action={
-            <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Button size="sm" onClick={() => openCreateExperiment({ notebookId: id })}>
               <Plus className={cn('mr-1.5 h-4 w-4')} /> Create experiment
             </Button>
           }
@@ -214,39 +210,10 @@ export default function NotebookPage() {
       ) : (
         <ExperimentTable
           experiments={experiments}
-          onRowClick={(exp) => navigate(`/app/experiments/${exp.id}`)}
+          onRowClick={handleRowClick}
+          onRowAction={handleRowAction}
         />
       )}
-
-      {/* Create experiment dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Experiment</DialogTitle>
-          </DialogHeader>
-          <div className={cn('space-y-3')}>
-            <div>
-              <Label htmlFor="new-exp-title">Title</Label>
-              <Input
-                id="new-exp-title"
-                className={cn('mt-1 h-8')}
-                placeholder="Untitled Experiment"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setShowCreate(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={createLoading} onClick={handleCreate}>
-              {createLoading && <Loader2 className={cn('mr-1.5 h-3.5 w-3.5 animate-spin')} />}
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Archive confirmation */}
       <AlertDialog open={showArchiveConfirm} onOpenChange={setShowArchiveConfirm}>

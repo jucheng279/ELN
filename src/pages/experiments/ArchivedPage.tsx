@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Archive } from 'lucide-react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useExperimentStore } from '@/stores/experimentStore';
@@ -37,8 +38,9 @@ export default function ArchivedPage() {
     try {
       await restoreExperiment(exp.id);
       setArchived((prev) => prev.filter((e) => e.id !== exp.id));
+      toast.success('Experiment restored');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to restore');
+      toast.error(err instanceof Error ? err.message : 'Failed to restore');
     }
   }
 

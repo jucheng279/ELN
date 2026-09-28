@@ -10,6 +10,7 @@ import PageHeader from '@/components/eln/PageHeader';
 import EmptyState from '@/components/eln/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 import {
   Select,
   SelectTrigger,
@@ -127,10 +128,14 @@ export default function ExperimentListPage() {
         navigate(`/app/experiments/${exp.id}`);
         break;
       case 'duplicate':
-        duplicateExperiment(exp.id);
+        duplicateExperiment(exp.id)
+          .then(() => toast.success('Experiment duplicated'))
+          .catch(() => toast.error('Failed to duplicate experiment'));
         break;
       case 'archive':
-        archiveExperiment(exp.id);
+        archiveExperiment(exp.id)
+          .then(() => toast.success('Experiment archived'))
+          .catch(() => toast.error('Failed to archive experiment'));
         break;
     }
   }

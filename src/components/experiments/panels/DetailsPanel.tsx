@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Tag as TagIcon } from 'lucide-react';
+import { Tag as TagIcon, Copy, Check } from 'lucide-react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import type { ExperimentContributor, ExperimentProtocol } from '@/lib/types';
 
@@ -29,6 +31,8 @@ export default function DetailsPanel() {
   const [protocols, setProtocols] = useState<ExperimentProtocol[]>([]);
   const [folderName, setFolderName] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [templateVersionNumber, setTemplateVersionNumber] = useState<number | null>(null);
+  const [idCopied, setIdCopied] = useState(false);
 
   useEffect(() => {
     if (!currentExperiment) return;
@@ -70,7 +74,28 @@ export default function DetailsPanel() {
     } else {
       setTemplateName(null);
     }
-  }, [currentExperiment?.id, currentExperiment?.folder_id, currentExperiment?.template_id]);
+
+    // Fetch template version number if template_version_id exists
+    if (currentExperiment.template_version_id) {
+      supabase
+        .from('template_versions')
+        .select('version_number')
+        .eq('id', currentExperiment.template_version_id)
+        .maybeSingle()
+        .then(({ data }) => setTemplateVersionNumber(data?.version_number ?? null));
+    } else {
+      setTemplateVersionNumber(null);
+    }
+  }, [currentExperiment?.id, currentExperiment?.folder_id, currentExperiment?.template_id, currentExperiment?.template_version_id]);
+
+  const handleCopyId = useCallback(() => {
+    if (!currentExperiment?.experiment_id) return;
+    navigator.clipboard.writeText(currentExperiment.experiment_id).then(() => {
+      setIdCopied(true);
+      toast.success('Experiment ID copied');
+      setTimeout(() => setIdCopied(false), 2000);
+    });
+  }, [currentExperiment?.experiment_id]);
 
   if (!currentExperiment) {
     return (
@@ -82,8 +107,31 @@ export default function DetailsPanel() {
 
   const exp = currentExperiment;
 
+  const templateDisplay = templateName
+    ? templateVersionNumber != null
+      ? `${templateName} · v${templateVersionNumber}`
+      : templateName
+    : 'Created from template';
+
   return (
     <div className="space-y-3 p-3">
+      {/* Experiment ID with copy */}
+      <div className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
+        <span className="font-mono text-xs text-muted-foreground">{exp.experiment_id}</span>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={handleCopyId}
+          className="shrink-0"
+        >
+          {idCopied ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
+          ) : (
+            <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
+        </Button>
+      </div>
+
       {/* Metadata */}
       <div className="divide-y divide-border rounded-lg bg-muted/50 px-3 py-1">
         <DetailRow label="Notebook">{exp.notebook?.name ?? '—'}</DetailRow>
@@ -162,7 +210,7 @@ export default function DetailsPanel() {
             <p className="mb-0.5 text-xs font-medium text-muted-foreground">
               Template
             </p>
-            <p className="text-xs text-foreground">{templateName ?? 'Created from template'}</p>
+            <p className="text-xs text-foreground">{templateDisplay}</p>
           </div>
         </>
       )}

@@ -1,6 +1,6 @@
 -- 08_review_lifecycle_tests.sql: full review lifecycle through canonical domain RPCs
 BEGIN;
-SELECT plan(22);
+SELECT plan(24);
 
 -- ──────────────────────────────────────────────────────
 -- Setup: author + reviewer in the same workspace

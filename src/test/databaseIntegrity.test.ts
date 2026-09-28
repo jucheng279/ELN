@@ -30,10 +30,11 @@ describe('Policy architecture', () => {
     'mentions',
     'notifications',
     'audit_events',
+    'comments',
   ];
 
   it('documents tables where all writes go through RPCs', () => {
-    expect(TABLES_WITH_NO_DIRECT_WRITES).toHaveLength(8);
+    expect(TABLES_WITH_NO_DIRECT_WRITES).toHaveLength(9);
   });
 });
 
@@ -143,8 +144,10 @@ describe('Domain RPC allowlist (public, callable by authenticated)', () => {
   });
 
   const INTERNAL_FUNCTIONS = [
+    '_build_experiment_snapshot',
     '_create_revision_internal',
     'enforce_block_lock',
+    'enforce_domain_status_transitions',
     'enforce_experiment_lock',
     'enforce_protocol_version_immutability',
     'enforce_template_version_immutability',
@@ -160,7 +163,7 @@ describe('Domain RPC allowlist (public, callable by authenticated)', () => {
   ];
 
   it('has internal functions not callable by clients', () => {
-    expect(INTERNAL_FUNCTIONS.length).toBeGreaterThan(10);
+    expect(INTERNAL_FUNCTIONS.length).toBeGreaterThan(12);
   });
 });
 

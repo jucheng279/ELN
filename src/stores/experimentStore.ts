@@ -138,19 +138,47 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 
+let editorSessionHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+async function claimEditorSessionRemote(experimentId: string) {
+  try {
+    await supabase.rpc('claim_editor_session', { p_experiment_id: experimentId });
+  } catch {
+    // Non-fatal: editing still works, just without session lock
+  }
+}
+
+async function releaseEditorSessionRemote(experimentId: string) {
+  try {
+    await supabase.rpc('release_editor_session', { p_experiment_id: experimentId });
+  } catch {
+    // Best-effort release
+  }
+}
+
 async function startAutosaveSession(experimentId: string) {
   if (activeExperimentId === experimentId) return;
   await stopAutosaveSession();
   activeExperimentId = experimentId;
   window.addEventListener('beforeunload', handleBeforeUnload);
+  await claimEditorSessionRemote(experimentId);
+  editorSessionHeartbeat = setInterval(() => {
+    claimEditorSessionRemote(experimentId);
+  }, 30_000);
 }
 
 async function stopAutosaveSession() {
+  if (editorSessionHeartbeat) {
+    clearInterval(editorSessionHeartbeat);
+    editorSessionHeartbeat = null;
+  }
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = null;
   await flushPendingBlocks();
+  const prevId = activeExperimentId;
   activeExperimentId = null;
   window.removeEventListener('beforeunload', handleBeforeUnload);
+  if (prevId) await releaseEditorSessionRemote(prevId);
 }
 
 // ──────────────────────────────────────────────

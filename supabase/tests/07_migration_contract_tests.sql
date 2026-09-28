@@ -1,6 +1,6 @@
 -- 07_migration_contract_tests.sql: catalog invariants that prevent regression loops
 BEGIN;
-SELECT plan(13);
+SELECT plan(14);
 
 -- ══════════════════════════════════════════════════
 -- 1. Exactly ONE _create_revision_internal
@@ -70,8 +70,17 @@ SELECT is(
   'delete_experiment_block has 3-arg signature'
 );
 
+-- 8. delete_experiment_block has NO argument defaults
+SELECT is(
+  (SELECT p.pronargdefaults FROM pg_proc p
+   JOIN pg_namespace n ON p.pronamespace = n.oid
+   WHERE n.nspname = 'public' AND p.proname = 'delete_experiment_block'),
+  0::smallint,
+  'delete_experiment_block has no argument defaults'
+);
+
 -- ══════════════════════════════════════════════════
--- 8. Legacy create_revision does not exist
+-- 9. Legacy create_revision does not exist
 -- ══════════════════════════════════════════════════
 SELECT ok(
   NOT EXISTS (
@@ -82,7 +91,7 @@ SELECT ok(
 );
 
 -- ══════════════════════════════════════════════════
--- 9. Old 4-arg _create_revision_internal does not exist
+-- 10. Old 4-arg _create_revision_internal does not exist
 -- ══════════════════════════════════════════════════
 SELECT ok(
   NOT EXISTS (
@@ -95,7 +104,7 @@ SELECT ok(
 );
 
 -- ══════════════════════════════════════════════════
--- 10. Old 2-arg delete_experiment_block does not exist
+-- 11. Old 2-arg delete_experiment_block does not exist
 -- ══════════════════════════════════════════════════
 SELECT ok(
   NOT EXISTS (
@@ -108,7 +117,7 @@ SELECT ok(
 );
 
 -- ══════════════════════════════════════════════════
--- 11. Snapshot builder is internal only
+-- 12. Snapshot builder is internal only
 -- ══════════════════════════════════════════════════
 SELECT ok(
   NOT has_function_privilege(
@@ -120,7 +129,7 @@ SELECT ok(
 );
 
 -- ══════════════════════════════════════════════════
--- 12. experiment_revisions has metadata column
+-- 13. experiment_revisions has metadata column
 -- ══════════════════════════════════════════════════
 SELECT ok(
   EXISTS (
@@ -132,14 +141,14 @@ SELECT ok(
 );
 
 -- ══════════════════════════════════════════════════
--- 13. Notification CHECK accepts review_resubmitted
+-- 14. Notification type review_requested is valid (used by resubmit)
 -- ══════════════════════════════════════════════════
 SELECT ok(
   (SELECT pg_get_constraintdef(c.oid)
    FROM pg_constraint c
    WHERE c.conrelid = 'public.notifications'::regclass AND c.contype = 'c'
-  ) LIKE '%review_resubmitted%',
-  'Notification CHECK constraint includes review_resubmitted'
+  ) LIKE '%review_requested%',
+  'Notification CHECK constraint includes review_requested'
 );
 
 SELECT * FROM finish();

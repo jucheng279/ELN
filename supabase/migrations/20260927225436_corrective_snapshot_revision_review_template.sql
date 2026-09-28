@@ -288,7 +288,7 @@ BEGIN
     (v_rev_result->>'revision_number')::int);
 
   INSERT INTO public.notifications (user_id, type, title, body, experiment_id)
-  VALUES (v_old_review.reviewer_id, 'review_resubmitted', 'Experiment resubmitted',
+  VALUES (v_old_review.reviewer_id, 'review_requested', 'Experiment resubmitted',
     'An experiment has been resubmitted for your review', p_experiment_id);
 
   RETURN jsonb_build_object('review_id', v_new_review_id, 'revision_id', v_revision_id,
@@ -406,10 +406,13 @@ GRANT EXECUTE ON FUNCTION public.create_experiment_rpc(uuid, uuid, text, uuid, u
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 6. delete_experiment_block — version MANDATORY, no default
---    Same identity (uuid,uuid,bigint) as created in prior migration,
---    so we use CREATE OR REPLACE to update the body.
+--    Prior migration created (uuid,uuid,bigint DEFAULT NULL).
+--    PostgreSQL cannot remove a default via CREATE OR REPLACE,
+--    so we DROP the exact signature then recreate without a default.
 -- ═══════════════════════════════════════════════════════════════════════
-CREATE OR REPLACE FUNCTION public.delete_experiment_block(
+DROP FUNCTION IF EXISTS public.delete_experiment_block(uuid, uuid, bigint);
+
+CREATE FUNCTION public.delete_experiment_block(
   p_experiment_id uuid,
   p_block_id uuid,
   p_expected_version bigint

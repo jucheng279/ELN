@@ -4,12 +4,12 @@ import { Plus, X, FlaskConical, Search } from 'lucide-react';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useNotebookStore } from '@/stores/notebookStore';
+import { useUIStore } from '@/stores/uiStore';
 import ExperimentTable from '@/components/experiments/ExperimentTable';
 import PageHeader from '@/components/eln/PageHeader';
 import EmptyState from '@/components/eln/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectTrigger,
@@ -17,14 +17,6 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
 import type { Experiment, ExperimentFilters, ExperimentStatus } from '@/lib/types';
 
 const STATUS_OPTIONS: { value: ExperimentStatus | ''; label: string }[] = [
@@ -47,18 +39,13 @@ export default function ExperimentListPage() {
     loading,
     filters,
     fetchExperiments,
-    createExperiment,
     archiveExperiment,
     duplicateExperiment,
     toggleFavorite,
     setFilters,
     clearFilters,
   } = useExperimentStore();
-
-  const [showCreate, setShowCreate] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newNotebookId, setNewNotebookId] = useState('');
-  const [creating, setCreating] = useState(false);
+  const openCreateExperiment = useUIStore((s) => s.openCreateExperiment);
 
   // Local filter state (debounced search)
   const [searchInput, setSearchInput] = useState(filters.search ?? '');
@@ -72,13 +59,11 @@ export default function ExperimentListPage() {
 
   const wsId = currentWorkspace?.id;
 
-  // Fetch experiments when workspace or filters change
   useEffect(() => {
     if (!wsId) return;
     fetchExperiments(wsId, filters);
   }, [wsId, filters, fetchExperiments]);
 
-  // Debounce search input
   useEffect(() => {
     const t = setTimeout(() => {
       setFilters({ search: searchInput || undefined });
@@ -138,8 +123,6 @@ export default function ExperimentListPage() {
   function handleRowAction(action: string, exp: Experiment) {
     switch (action) {
       case 'view':
-        navigate(`/app/experiments/${exp.id}`);
-        break;
       case 'edit':
         navigate(`/app/experiments/${exp.id}`);
         break;
@@ -152,28 +135,6 @@ export default function ExperimentListPage() {
     }
   }
 
-  async function handleCreate() {
-    if (!wsId || !newNotebookId) return;
-    setCreating(true);
-    try {
-      const exp = await createExperiment(wsId, newNotebookId, newTitle.trim() || undefined);
-      setShowCreate(false);
-      setNewTitle('');
-      setNewNotebookId('');
-      navigate(`/app/experiments/${exp.id}`);
-    } catch (err) {
-      console.error('Failed to create experiment:', err);
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  function openCreateDialog() {
-    setNewNotebookId(notebooks[0]?.id ?? '');
-    setShowCreate(true);
-  }
-
-  // Filter out archived
   const visibleExperiments = experiments.filter((e) => !e.is_archived);
 
   return (
@@ -183,7 +144,7 @@ export default function ExperimentListPage() {
         <PageHeader
           title="Experiments"
           actions={
-            <Button size="sm" onClick={openCreateDialog}>
+            <Button size="sm" onClick={() => openCreateExperiment()}>
               <Plus size={15} />
               New Experiment
             </Button>
@@ -268,7 +229,7 @@ export default function ExperimentListPage() {
             }
             action={
               !hasActiveFilters ? (
-                <Button size="sm" onClick={openCreateDialog}>
+                <Button size="sm" onClick={() => openCreateExperiment()}>
                   <Plus size={15} />
                   New Experiment
                 </Button>
@@ -287,53 +248,6 @@ export default function ExperimentListPage() {
           />
         )}
       </div>
-
-      {/* Create Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>New Experiment</DialogTitle>
-            <DialogDescription>
-              Select a notebook and optionally provide a title.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label>
-                Notebook <span className="text-destructive">*</span>
-              </Label>
-              <Select value={newNotebookId} onValueChange={(v) => v !== null && setNewNotebookId(v)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select notebook…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {notebooks.map((nb) => (
-                    <SelectItem key={nb.id} value={nb.id}>
-                      {nb.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Title</Label>
-              <Input
-                placeholder="Untitled Experiment"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setShowCreate(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={!newNotebookId || creating} onClick={handleCreate}>
-              {creating ? 'Creating…' : 'Create'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

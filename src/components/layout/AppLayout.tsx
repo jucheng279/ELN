@@ -19,6 +19,7 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useNotebookStore } from '@/stores/notebookStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import NotificationCenter from '@/components/notifications/NotificationCenter';
 
@@ -471,6 +472,16 @@ export default function AppLayout() {
 
             {/* Right actions */}
             <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => useUIStore.getState().openCreateExperiment()}
+              >
+                <Plus className="size-3.5" />
+                New
+              </Button>
+
               <Tooltip>
                 <TooltipTrigger
                   render={

@@ -11,21 +11,20 @@ DECLARE
   v_nb_id uuid;
   v_exp_id uuid;
 BEGIN
-  -- Create users
-  INSERT INTO auth.users (id, email, role, aud, instance_id) VALUES
-    (v_user_id, 'comment1@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000'),
-    (v_user2_id, 'comment2@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000'),
-    (v_outsider_id, 'outsider@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
-  INSERT INTO public.profiles (id, email, display_name) VALUES
-    (v_user_id, 'comment1@test.com', 'Commenter 1'),
-    (v_user2_id, 'comment2@test.com', 'Commenter 2'),
-    (v_outsider_id, 'outsider@test.com', 'Outsider');
+  -- Create users (profiles auto-created by handle_new_user trigger)
+  INSERT INTO auth.users (id, email, role, aud, instance_id, raw_user_meta_data) VALUES
+    (v_user_id, 'comment1@test.com', 'authenticated', 'authenticated',
+     '00000000-0000-0000-0000-000000000000', jsonb_build_object('display_name', 'Commenter 1')),
+    (v_user2_id, 'comment2@test.com', 'authenticated', 'authenticated',
+     '00000000-0000-0000-0000-000000000000', jsonb_build_object('display_name', 'Commenter 2')),
+    (v_outsider_id, 'outsider@test.com', 'authenticated', 'authenticated',
+     '00000000-0000-0000-0000-000000000000', jsonb_build_object('display_name', 'Outsider'));
 
-  -- Workspace + members (outsider is NOT a member)
+  -- Workspace (owner membership auto-created by trigger for v_user_id)
   INSERT INTO public.workspaces (id, name, created_by) VALUES (gen_random_uuid(), 'Comment WS', v_user_id)
   RETURNING id INTO v_ws_id;
+  -- Add user2 as member (outsider is NOT a member)
   INSERT INTO public.workspace_members (workspace_id, user_id, role) VALUES
-    (v_ws_id, v_user_id, 'owner'),
     (v_ws_id, v_user2_id, 'member');
 
   INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (gen_random_uuid(), v_ws_id, 'Comment NB', v_user_id)

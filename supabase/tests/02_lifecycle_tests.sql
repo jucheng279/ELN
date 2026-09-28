@@ -9,13 +9,17 @@ DECLARE
   v_ws_id uuid;
   v_nb_id uuid;
 BEGIN
-  INSERT INTO auth.users (id, email, role, aud, instance_id)
-  VALUES (v_user_id, 'lifecycle@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
-  INSERT INTO public.profiles (id, email, display_name)
-  VALUES (v_user_id, 'lifecycle@test.com', 'Lifecycle Tester');
+  INSERT INTO auth.users (id, email, role, aud, instance_id, raw_user_meta_data)
+  VALUES (v_user_id, 'lifecycle@test.com', 'authenticated', 'authenticated',
+    '00000000-0000-0000-0000-000000000000',
+    jsonb_build_object('display_name', 'Lifecycle Tester'));
+  -- profile auto-created by handle_new_user trigger
+
   INSERT INTO public.workspaces (id, name, created_by)
   VALUES (gen_random_uuid(), 'Lifecycle WS', v_user_id)
   RETURNING id INTO v_ws_id;
+  -- workspace_members(owner) auto-created by handle_new_workspace trigger
+
   INSERT INTO public.notebooks (id, workspace_id, name, created_by)
   VALUES (gen_random_uuid(), v_ws_id, 'Lifecycle NB', v_user_id)
   RETURNING id INTO v_nb_id;

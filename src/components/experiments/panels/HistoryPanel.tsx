@@ -13,18 +13,13 @@ import {
   ChevronDown,
   RotateCcw,
   Hash,
-  AlertTriangle,
-  Info,
-  CheckCircle2,
-  FileText,
   Paperclip,
-  Image,
-  Link2,
   FlaskConical,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
-import type { ExperimentRevision, AuditEvent, BlockType } from '@/lib/types';
+import type { ExperimentRevision, AuditEvent, BlockType, BlockContent } from '@/lib/types';
+import ReadonlyBlockRenderer from '@/components/editor/ReadonlyBlockRenderer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -44,11 +39,6 @@ import {
 } from '@/components/ui/collapsible';
 import EmptyState from '@/components/eln/EmptyState';
 import { cn } from '@/lib/utils';
-import DOMPurify from 'dompurify';
-
-function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(html);
-}
 
 const PAGE_SIZE = 20;
 
@@ -98,309 +88,6 @@ const STATUS_STYLES: Record<string, string> = {
   locked: 'bg-red-100 text-red-700',
   archived: 'bg-gray-100 text-gray-500',
 };
-
-// ─── Block renderers for snapshot view ────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function SnapshotBlockRenderer({ block }: { block: { type: BlockType; content: any } }) {
-  const { type, content } = block;
-
-  if (!content && type !== 'divider') {
-    return null;
-  }
-
-  switch (type) {
-    case 'paragraph':
-      return (
-        <div
-          className="prose prose-sm max-w-none text-foreground dark:prose-invert"
-          dangerouslySetInnerHTML={{ __html: sanitizeHtml(content?.html ?? content?.text ?? '') }}
-        />
-      );
-
-    case 'heading': {
-      const level = content?.level ?? 2;
-      const text = content?.text ?? '';
-      const Tag = (`h${Math.min(Math.max(level, 1), 6)}`) as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
-      const sizes: Record<number, string> = {
-        1: 'text-2xl font-bold',
-        2: 'text-xl font-semibold',
-        3: 'text-lg font-semibold',
-        4: 'text-base font-semibold',
-        5: 'text-sm font-semibold',
-        6: 'text-sm font-medium',
-      };
-      return <Tag className={cn(sizes[level] ?? sizes[3], 'text-foreground')}>{text}</Tag>;
-    }
-
-    case 'list': {
-      const items: string[] = content?.items ?? [];
-      const ordered = content?.style === 'ordered';
-      const ListTag = ordered ? 'ol' : 'ul';
-      return (
-        <ListTag className={cn('ml-5 space-y-0.5 text-sm text-foreground', ordered ? 'list-decimal' : 'list-disc')}>
-          {items.map((item, i) => (
-            <li key={i}>{item}</li>
-          ))}
-        </ListTag>
-      );
-    }
-
-    case 'checklist': {
-      const items: { text: string; checked: boolean }[] = content?.items ?? [];
-      return (
-        <div className="space-y-1">
-          {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={item.checked}
-                readOnly
-                className="h-3.5 w-3.5 rounded border-muted-foreground/40"
-              />
-              <span className={cn(item.checked && 'text-muted-foreground line-through')}>
-                {item.text}
-              </span>
-            </div>
-          ))}
-        </div>
-      );
-    }
-
-    case 'callout': {
-      const calloutType = content?.type ?? 'info';
-      const text = content?.text ?? content?.html ?? '';
-      const styles: Record<string, { bg: string; border: string; icon: typeof Info }> = {
-        info: { bg: 'bg-blue-50 dark:bg-blue-950/30', border: 'border-blue-200 dark:border-blue-800', icon: Info },
-        warning: { bg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-800', icon: AlertTriangle },
-        success: { bg: 'bg-green-50 dark:bg-green-950/30', border: 'border-green-200 dark:border-green-800', icon: CheckCircle2 },
-        error: { bg: 'bg-red-50 dark:bg-red-950/30', border: 'border-red-200 dark:border-red-800', icon: AlertTriangle },
-      };
-      const style = styles[calloutType] ?? styles.info;
-      const CalloutIcon = style.icon;
-      return (
-        <div className={cn('flex gap-2.5 rounded-lg border p-3', style.bg, style.border)}>
-          <CalloutIcon className="mt-0.5 h-4 w-4 shrink-0" />
-          <div className="prose prose-sm max-w-none text-foreground dark:prose-invert" dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
-        </div>
-      );
-    }
-
-    case 'table': {
-      const html = content?.html;
-      if (html) {
-        return (
-          <div
-            className="overflow-x-auto rounded-lg border [&_table]:w-full [&_table]:text-sm [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
-          />
-        );
-      }
-      // Fallback for rows/columns data
-      const rows: string[][] = content?.rows ?? [];
-      const headers: string[] = content?.headers ?? [];
-      return (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            {headers.length > 0 && (
-              <thead>
-                <tr>
-                  {headers.map((h, i) => (
-                    <th key={i} className="border-b bg-muted px-2 py-1 text-left font-medium">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-            )}
-            <tbody>
-              {rows.map((row, ri) => (
-                <tr key={ri}>
-                  {row.map((cell, ci) => (
-                    <td key={ci} className="border-b px-2 py-1">{cell}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    }
-
-    case 'parameters': {
-      const params: { key: string; value: string; unit?: string }[] = content?.parameters ?? content?.items ?? [];
-      if (!Array.isArray(params) || params.length === 0) {
-        // Fallback: treat content as key-value object
-        const entries = Object.entries(content ?? {}).filter(([k]) => k !== 'type');
-        if (entries.length === 0) return null;
-        return (
-          <div className="rounded-lg border bg-muted/30">
-            <div className="grid grid-cols-[auto_1fr] text-sm">
-              {entries.map(([k, v], i) => (
-                <div key={k} className={cn('contents', i > 0 && '[&>*]:border-t')}>
-                  <div className="border-r bg-muted/50 px-3 py-1.5 font-medium text-muted-foreground">{k}</div>
-                  <div className="px-3 py-1.5">{String(v)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      }
-      return (
-        <div className="rounded-lg border bg-muted/30">
-          <div className="grid grid-cols-[auto_1fr] text-sm">
-            {params.map((p, i) => (
-              <div key={i} className={cn('contents', i > 0 && '[&>*]:border-t')}>
-                <div className="border-r bg-muted/50 px-3 py-1.5 font-medium text-muted-foreground">{p.key}</div>
-                <div className="px-3 py-1.5">
-                  {p.value}{p.unit ? <span className="ml-1 text-muted-foreground">{p.unit}</span> : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    case 'code': {
-      const code = content?.code ?? content?.text ?? '';
-      const language = content?.language ?? '';
-      return (
-        <div className="rounded-lg border bg-zinc-950 dark:bg-zinc-900">
-          {language && (
-            <div className="border-b border-zinc-800 px-3 py-1 text-xs text-zinc-400">{language}</div>
-          )}
-          <pre className="overflow-x-auto p-3 text-xs text-zinc-100">
-            <code>{code}</code>
-          </pre>
-        </div>
-      );
-    }
-
-    case 'divider':
-      return <hr className="border-border" />;
-
-    case 'image': {
-      const url = content?.url ?? content?.src ?? content?.storagePath ?? '';
-      const alt = content?.alt ?? content?.caption ?? '';
-      return (
-        <div className="space-y-1">
-          {url ? (
-            <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
-              <Image className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{alt || url}</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-              <Image className="h-4 w-4 shrink-0" />
-              <span>Image (no URL recorded)</span>
-            </div>
-          )}
-          {content?.caption && <p className="text-xs text-muted-foreground">{content.caption}</p>}
-        </div>
-      );
-    }
-
-    case 'protocol': {
-      const name = content?.name ?? content?.protocol_name ?? 'Unnamed protocol';
-      const steps: { instruction?: string; step_number?: number; text?: string }[] = content?.steps ?? [];
-      return (
-        <div className="rounded-lg border">
-          <div className="flex items-center gap-2 border-b bg-muted/50 px-3 py-2 text-sm font-medium">
-            <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
-            {name}
-          </div>
-          {steps.length > 0 && (
-            <ol className="list-decimal space-y-1 py-2 pl-8 pr-3 text-sm">
-              {steps.map((s, i) => (
-                <li key={i}>{s.instruction ?? s.text ?? `Step ${s.step_number ?? i + 1}`}</li>
-              ))}
-            </ol>
-          )}
-        </div>
-      );
-    }
-
-    case 'attachment': {
-      const filename = content?.filename ?? content?.original_filename ?? content?.display_name ?? 'Unknown file';
-      const size = content?.file_size;
-      return (
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
-          <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate font-medium">{filename}</span>
-          {size != null && (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              ({formatBytes(size)})
-            </span>
-          )}
-        </div>
-      );
-    }
-
-    case 'result': {
-      const title = content?.title ?? 'Result';
-      const text = content?.html ?? content?.text ?? '';
-      return (
-        <div className="rounded-lg border border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20">
-          <div className="flex items-center gap-2 border-b border-green-200 px-3 py-2 text-sm font-medium dark:border-green-900">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-            {title}
-          </div>
-          {text && (
-            <div className="prose prose-sm max-w-none p-3 dark:prose-invert" dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
-          )}
-        </div>
-      );
-    }
-
-    case 'reference': {
-      const title = content?.title ?? '';
-      const doi = content?.doi ?? '';
-      const url = content?.url ?? '';
-      const citation = content?.citation ?? '';
-      return (
-        <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
-          <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            {title && <div className="font-medium">{title}</div>}
-            {citation && <div className="text-xs text-muted-foreground">{citation}</div>}
-            {doi && <div className="text-xs text-muted-foreground">DOI: {doi}</div>}
-            {url && <div className="truncate text-xs text-blue-600">{url}</div>}
-          </div>
-        </div>
-      );
-    }
-
-    case 'related_experiment': {
-      const eid = content?.experiment_id ?? content?.id ?? '';
-      const title = content?.title ?? '';
-      const relation = content?.relation_type ?? '';
-      return (
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="font-medium">{eid}</span>
-          {title && <span className="text-muted-foreground">— {title}</span>}
-          {relation && <Badge variant="secondary" className="ml-auto text-[10px]">{relation}</Badge>}
-        </div>
-      );
-    }
-
-    default:
-      return (
-        <div className="rounded-lg border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
-          <span className="font-mono">[{type}]</span> block — no renderer available
-        </div>
-      );
-  }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
-
-// ─── Snapshot viewer content ────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SnapshotViewer({ snapshot }: { snapshot: any }) {
@@ -475,7 +162,7 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
               return 0;
             })
             .map((block: Record<string, unknown>, i: number) => (
-              <SnapshotBlockRenderer key={(block.id as string) ?? i} block={block as { type: BlockType; content: Record<string, unknown> | null }} />
+              <ReadonlyBlockRenderer key={(block.id as string) ?? i} type={block.type as BlockType} content={(block.content ?? {}) as BlockContent} />
             ))}
         </div>
       )}

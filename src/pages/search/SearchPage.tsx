@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -11,18 +11,13 @@ import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useNotebookStore } from '@/stores/notebookStore';
-import type {
-  Experiment,
-  ExperimentStatus,
-  Tag,
-} from '@/lib/types';
+import type { ExperimentStatus, Tag } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
 import EmptyState from '@/components/eln/EmptyState';
 import { cn } from '@/lib/utils';
 
-// ── Constants ────────────────────────────────────
 const DEBOUNCE_MS = 300;
 
 const STATUS_OPTIONS: { value: ExperimentStatus | ''; label: string }[] = [
@@ -38,7 +33,20 @@ const STATUS_OPTIONS: { value: ExperimentStatus | ''; label: string }[] = [
 
 type SortOption = 'relevance' | 'date';
 
-// ── Helpers ──────────────────────────────────────
+interface SearchResult {
+  id: string;
+  experiment_id: string;
+  title: string;
+  status: ExperimentStatus;
+  notebook_id: string;
+  created_by: string;
+  experiment_date: string;
+  created_at: string;
+  updated_at: string;
+  notebook_name: string | null;
+  author_name: string | null;
+  rank: number;
+}
 
 function highlightSnippet(text: string, query: string): string {
   if (!query.trim()) return text;
@@ -49,22 +57,20 @@ function highlightSnippet(text: string, query: string): string {
   );
 }
 
-// ── Component ────────────────────────────────────
-
 export default function SearchPage() {
   const navigate = useNavigate();
   const { currentWorkspace, members, fetchMembers } = useWorkspaceStore();
   const { notebooks } = useNotebookStore();
 
-  // Search state
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [results, setResults] = useState<Experiment[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
 
-  // Filters
   const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ExperimentStatus | ''>('');
   const [notebookFilter, setNotebookFilter] = useState('');
@@ -75,15 +81,12 @@ export default function SearchPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('relevance');
 
-  const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const inputRef = useState<HTMLInputElement | null>(null);
 
-  // Focus search input on mount
   useEffect(() => {
-    inputRef.current?.focus();
+    (inputRef[0] as HTMLInputElement | null)?.focus();
   }, []);
 
-  // Fetch members and tags once
   useEffect(() => {
     if (currentWorkspace) {
       fetchMembers();
@@ -95,23 +98,21 @@ export default function SearchPage() {
     }
   }, [currentWorkspace, fetchMembers]);
 
-  // Debounce query
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+    const timer = setTimeout(() => {
       setDebouncedQuery(query);
+      setPage(1);
     }, DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => clearTimeout(timer);
   }, [query]);
 
-  // Execute search
   const executeSearch = useCallback(async () => {
     if (!currentWorkspace) return;
-    if (!debouncedQuery.trim() && !statusFilter && !notebookFilter && !authorFilter && !dateFrom && !dateTo && selectedTags.length === 0) {
+    const q = debouncedQuery.trim();
+    if (!q && !statusFilter && !notebookFilter && !authorFilter && !dateFrom && !dateTo && selectedTags.length === 0) {
       setResults([]);
       setTotalCount(0);
+      setTotalPages(0);
       setHasSearched(false);
       return;
     }
@@ -120,62 +121,26 @@ export default function SearchPage() {
     setHasSearched(true);
 
     try {
-      let searchQuery = supabase
-        .from('experiments')
-        .select(
-          '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)',
-          { count: 'exact' },
-        )
-        .eq('workspace_id', currentWorkspace.id)
-        .eq('is_archived', false);
+      const { data, error } = await supabase.rpc('search_experiments', {
+        p_workspace_id: currentWorkspace.id,
+        p_query: q || null,
+        p_status: statusFilter || null,
+        p_notebook_id: notebookFilter || null,
+        p_created_by: authorFilter || null,
+        p_date_from: dateFrom || null,
+        p_date_to: dateTo || null,
+        p_tag_ids: selectedTags.length > 0 ? selectedTags : null,
+        p_sort_by: sortBy,
+        p_page: page,
+        p_page_size: 25,
+      });
 
-      // Full-text search or prefix match
-      const q = debouncedQuery.trim();
-      if (q) {
-        // Try experiment_id prefix match first, then text search
-        const isIdSearch = /^[A-Z]{2,}-\d*/i.test(q);
-        if (isIdSearch) {
-          searchQuery = searchQuery.ilike('experiment_id', `${q}%`);
-        } else {
-          searchQuery = searchQuery.textSearch('search_vector', q, {
-            type: 'websearch',
-          });
-        }
-      }
-
-      // Apply filters
-      if (statusFilter) searchQuery = searchQuery.eq('status', statusFilter);
-      if (notebookFilter) searchQuery = searchQuery.eq('notebook_id', notebookFilter);
-      if (authorFilter) searchQuery = searchQuery.eq('created_by', authorFilter);
-      if (dateFrom) searchQuery = searchQuery.gte('experiment_date', dateFrom);
-      if (dateTo) searchQuery = searchQuery.lte('experiment_date', dateTo);
-
-      // Sort
-      if (sortBy === 'date' || !q) {
-        searchQuery = searchQuery.order('updated_at', { ascending: false });
-      } else {
-        searchQuery = searchQuery.order('updated_at', { ascending: false });
-      }
-
-      searchQuery = searchQuery.limit(50);
-
-      const { data, error, count } = await searchQuery;
       if (error) throw error;
 
-      let experiments = (data ?? []) as Experiment[];
-
-      // Client-side tag filtering
-      if (selectedTags.length > 0) {
-        const { data: taggedRows } = await supabase
-          .from('experiment_tags')
-          .select('experiment_id')
-          .in('tag_id', selectedTags);
-        const taggedIds = new Set((taggedRows ?? []).map((r) => r.experiment_id));
-        experiments = experiments.filter((e) => taggedIds.has(e.id));
-      }
-
-      setResults(experiments);
-      setTotalCount(selectedTags.length > 0 ? experiments.length : (count ?? 0));
+      const payload = data as { results: SearchResult[]; total: number; total_pages: number };
+      setResults(payload.results ?? []);
+      setTotalCount(payload.total ?? 0);
+      setTotalPages(payload.total_pages ?? 0);
     } catch (err) {
       console.error('Search failed:', err);
       setResults([]);
@@ -183,7 +148,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentWorkspace, debouncedQuery, statusFilter, notebookFilter, authorFilter, dateFrom, dateTo, selectedTags, sortBy]);
+  }, [currentWorkspace, debouncedQuery, statusFilter, notebookFilter, authorFilter, dateFrom, dateTo, selectedTags, sortBy, page]);
 
   useEffect(() => {
     executeSearch();
@@ -214,7 +179,7 @@ export default function SearchPage() {
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" size={20} />
             <Input
-              ref={inputRef}
+              ref={(el) => { (inputRef as [HTMLInputElement | null])[0] = el; }}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -263,11 +228,8 @@ export default function SearchPage() {
                 )}
               </div>
 
-              {/* Notebook filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Notebook
-                </label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Notebook</label>
                 <select
                   value={notebookFilter}
                   onChange={(e) => setNotebookFilter(e.target.value)}
@@ -275,36 +237,26 @@ export default function SearchPage() {
                 >
                   <option value="">All notebooks</option>
                   {notebooks.map((nb) => (
-                    <option key={nb.id} value={nb.id}>
-                      {nb.name}
-                    </option>
+                    <option key={nb.id} value={nb.id}>{nb.name}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Status filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Status
-                </label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Status</label>
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as ExperimentStatus | '')}
                   className="h-8 w-full rounded-lg border border-border bg-background px-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {STATUS_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Author filter */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Author
-                </label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Author</label>
                 <select
                   value={authorFilter}
                   onChange={(e) => setAuthorFilter(e.target.value)}
@@ -319,11 +271,8 @@ export default function SearchPage() {
                 </select>
               </div>
 
-              {/* Date range */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Date range
-                </label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Date range</label>
                 <div className="space-y-1.5">
                   <div className="relative">
                     <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
@@ -332,7 +281,6 @@ export default function SearchPage() {
                       value={dateFrom}
                       onChange={(e) => setDateFrom(e.target.value)}
                       className="h-8 w-full rounded-lg border border-border bg-background py-1.5 pl-7 pr-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="From"
                     />
                   </div>
                   <div className="relative">
@@ -342,18 +290,14 @@ export default function SearchPage() {
                       value={dateTo}
                       onChange={(e) => setDateTo(e.target.value)}
                       className="h-8 w-full rounded-lg border border-border bg-background py-1.5 pl-7 pr-2.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="To"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Tags */}
               {tags.length > 0 && (
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Tags
-                  </label>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Tags</label>
                   <div className="flex flex-wrap gap-1.5">
                     {tags.map((tag) => (
                       <button
@@ -377,7 +321,6 @@ export default function SearchPage() {
 
           {/* Results area */}
           <div className="min-w-0 flex-1">
-            {/* Results header */}
             {hasSearched && (
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
@@ -406,7 +349,6 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* No query yet */}
             {!hasSearched && !loading && (
               <div className="py-20">
                 <EmptyState
@@ -417,7 +359,6 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* No results */}
             {hasSearched && !loading && results.length === 0 && (
               <div className="py-16">
                 <EmptyState
@@ -428,7 +369,6 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* Results list */}
             {results.length > 0 && (
               <div className="divide-y divide-border/50">
                 {results.map((exp) => (
@@ -452,13 +392,9 @@ export default function SearchPage() {
                           }}
                         />
                         <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                          {exp.notebook && <span>{exp.notebook.name}</span>}
-                          {exp.created_by_profile && (
-                            <span>{exp.created_by_profile.display_name}</span>
-                          )}
-                          <span>
-                            {format(new Date(exp.updated_at), 'MMM d, yyyy')}
-                          </span>
+                          {exp.notebook_name && <span>{exp.notebook_name}</span>}
+                          {exp.author_name && <span>{exp.author_name}</span>}
+                          <span>{format(new Date(exp.updated_at), 'MMM d, yyyy')}</span>
                         </div>
                       </div>
                     </div>
@@ -467,7 +403,29 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* Loading skeleton */}
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-muted"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-muted-foreground">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-muted"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+
             {loading && (
               <div className="space-y-3 py-2">
                 {Array.from({ length: 5 }).map((_, i) => (

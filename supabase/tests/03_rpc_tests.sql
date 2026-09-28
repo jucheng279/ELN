@@ -11,15 +11,15 @@ DECLARE
   v_ws_id uuid;
   v_nb_id uuid;
 BEGIN
-  -- Create user
-  INSERT INTO auth.users (id, email, role, aud, instance_id)
-  VALUES (v_user_id, 'rpc_test@example.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
-  INSERT INTO public.profiles (id, email, display_name) VALUES (v_user_id, 'rpc_test@example.com', 'RPC Tester');
+  -- Create user (profile auto-created by trigger; display_name from raw_user_meta_data)
+  INSERT INTO auth.users (id, email, role, aud, instance_id, raw_user_meta_data)
+  VALUES (v_user_id, 'rpc_test@example.com', 'authenticated', 'authenticated',
+    '00000000-0000-0000-0000-000000000000',
+    jsonb_build_object('display_name', 'RPC Tester'));
 
-  -- Create workspace + membership
+  -- Create workspace (workspace_members owner auto-created by trigger)
   INSERT INTO public.workspaces (id, name, created_by) VALUES (gen_random_uuid(), 'RPC Test WS', v_user_id)
   RETURNING id INTO v_ws_id;
-  INSERT INTO public.workspace_members (workspace_id, user_id, role) VALUES (v_ws_id, v_user_id, 'owner');
 
   -- Create notebook
   INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (gen_random_uuid(), v_ws_id, 'Test NB', v_user_id)

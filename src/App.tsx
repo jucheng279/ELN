@@ -29,6 +29,7 @@ const SearchPage = lazy(() => import('@/pages/search/SearchPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const CommandPalette = lazy(() => import('@/components/CommandPalette'));
+const CreateExperimentDialog = lazy(() => import('@/components/experiments/CreateExperimentDialog'));
 
 function Spinner() {
   return (
@@ -67,6 +68,7 @@ export default function App() {
       <TooltipProvider delay={300}>
         <BrowserRouter>
           <CommandPalette />
+          <CreateExperimentDialog />
           <Suspense fallback={<Spinner />}>
             <Routes>
               <Route path="/login" element={<GuestGuard><LoginPage /></GuestGuard>} />

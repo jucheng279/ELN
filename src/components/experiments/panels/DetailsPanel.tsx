@@ -27,6 +27,8 @@ export default function DetailsPanel() {
   const { currentExperiment } = useExperimentStore();
   const [contributors, setContributors] = useState<ExperimentContributor[]>([]);
   const [protocols, setProtocols] = useState<ExperimentProtocol[]>([]);
+  const [folderName, setFolderName] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentExperiment) return;
@@ -46,7 +48,29 @@ export default function DetailsPanel() {
       .then(({ data }) =>
         setProtocols((data ?? []) as ExperimentProtocol[]),
       );
-  }, [currentExperiment?.id]);
+
+    if (currentExperiment.folder_id) {
+      supabase
+        .from('folders')
+        .select('name')
+        .eq('id', currentExperiment.folder_id)
+        .maybeSingle()
+        .then(({ data }) => setFolderName(data?.name ?? null));
+    } else {
+      setFolderName(null);
+    }
+
+    if (currentExperiment.template_id) {
+      supabase
+        .from('templates')
+        .select('name')
+        .eq('id', currentExperiment.template_id)
+        .maybeSingle()
+        .then(({ data }) => setTemplateName(data?.name ?? null));
+    } else {
+      setTemplateName(null);
+    }
+  }, [currentExperiment?.id, currentExperiment?.folder_id, currentExperiment?.template_id]);
 
   if (!currentExperiment) {
     return (
@@ -64,7 +88,7 @@ export default function DetailsPanel() {
       <div className="divide-y divide-border rounded-lg bg-muted/50 px-3 py-1">
         <DetailRow label="Notebook">{exp.notebook?.name ?? '—'}</DetailRow>
         {exp.folder_id && (
-          <DetailRow label="Folder">{exp.folder_id}</DetailRow>
+          <DetailRow label="Folder">{folderName ?? '—'}</DetailRow>
         )}
         <DetailRow label="Owner">
           {exp.created_by_profile?.display_name ?? '—'}
@@ -138,7 +162,7 @@ export default function DetailsPanel() {
             <p className="mb-0.5 text-xs font-medium text-muted-foreground">
               Template
             </p>
-            <p className="text-xs text-foreground">Created from template</p>
+            <p className="text-xs text-foreground">{templateName ?? 'Created from template'}</p>
           </div>
         </>
       )}

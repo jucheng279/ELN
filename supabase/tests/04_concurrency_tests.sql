@@ -12,13 +12,14 @@ DECLARE
   v_exp_id uuid;
   v_block_result jsonb;
 BEGIN
-  INSERT INTO auth.users (id, email, role, aud, instance_id)
-  VALUES (v_user_id, 'concurrency@test.com', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000');
-  INSERT INTO public.profiles (id, email, display_name) VALUES (v_user_id, 'concurrency@test.com', 'Conc Tester');
+  INSERT INTO auth.users (id, email, role, aud, instance_id, raw_user_meta_data)
+  VALUES (v_user_id, 'concurrency@test.com', 'authenticated', 'authenticated',
+    '00000000-0000-0000-0000-000000000000',
+    jsonb_build_object('display_name', 'Conc Tester'));
+  -- profile + workspace_members auto-created by triggers
 
   INSERT INTO public.workspaces (id, name, created_by) VALUES (gen_random_uuid(), 'Conc WS', v_user_id)
   RETURNING id INTO v_ws_id;
-  INSERT INTO public.workspace_members (workspace_id, user_id, role) VALUES (v_ws_id, v_user_id, 'owner');
 
   INSERT INTO public.notebooks (id, workspace_id, name, created_by) VALUES (gen_random_uuid(), v_ws_id, 'Conc NB', v_user_id)
   RETURNING id INTO v_nb_id;

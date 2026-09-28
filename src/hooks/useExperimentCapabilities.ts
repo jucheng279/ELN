@@ -1,6 +1,8 @@
-import type { Experiment } from '@/lib/types';
+import { useState, useEffect, useMemo } from 'react';
+import { supabase } from '@/lib/supabase';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
+import type { Experiment, WorkspaceMemberRole } from '@/lib/types';
 
 export interface ExperimentCapabilities {
   canEditContent: boolean;
@@ -10,74 +12,121 @@ export interface ExperimentCapabilities {
   canReopen: boolean;
   canSubmitReview: boolean;
   canReview: boolean;
+  canRequestChanges: boolean;
+  canApprove: boolean;
   canSign: boolean;
   canArchive: boolean;
   canRestore: boolean;
-  canCreateAmendment: boolean;
   canRestoreRevision: boolean;
+  canCreateAmendment: boolean;
   canDuplicate: boolean;
   canComment: boolean;
   isReadOnly: boolean;
-  role: string | null;
+  role: WorkspaceMemberRole | 'none' | 'anonymous';
 }
 
-const CONTENT_MUTABLE = new Set(['draft', 'in_progress', 'changes_requested']);
+const EMPTY_CAPS: ExperimentCapabilities = {
+  canEditContent: false, canEditMetadata: false,
+  canStart: false, canComplete: false, canReopen: false,
+  canSubmitReview: false, canReview: false, canRequestChanges: false,
+  canApprove: false, canSign: false, canArchive: false, canRestore: false,
+  canRestoreRevision: false, canCreateAmendment: false, canDuplicate: false,
+  canComment: false, isReadOnly: true, role: 'none',
+};
 
-export function useExperimentCapabilities(
-  experiment: Experiment | null
+function localFallback(
+  experiment: Experiment | null,
+  role: WorkspaceMemberRole | null,
+  userId: string | null
 ): ExperimentCapabilities {
-  const { members } = useWorkspaceStore();
-  const { user } = useAuthStore();
-
-  const none: ExperimentCapabilities = {
-    canEditContent: false,
-    canEditMetadata: false,
-    canStart: false,
-    canComplete: false,
-    canReopen: false,
-    canSubmitReview: false,
-    canReview: false,
-    canSign: false,
-    canArchive: false,
-    canRestore: false,
-    canCreateAmendment: false,
-    canRestoreRevision: false,
-    canDuplicate: false,
-    canComment: false,
-    isReadOnly: true,
-    role: null,
-  };
-
-  if (!experiment || !user) return none;
-
-  const member = members.find((m) => m.user_id === user.id);
-  const role = member?.role ?? null;
-  if (!role) return none;
-
-  const isGuest = role === 'guest';
-  const isEditor = !isGuest; // member, admin, owner are all editors
-  const isAuthor = user.id === experiment.created_by;
-  const status = experiment.status;
-  const isMutable = CONTENT_MUTABLE.has(status);
-  const isLocked = !!experiment.is_locked;
-  const isArchived = !!experiment.is_archived;
+  if (!experiment || !role || !userId) return EMPTY_CAPS;
+  const isEditor = role !== 'guest';
+  const isAuthor = experiment.created_by === userId;
+  const mutableStatuses = ['draft', 'in_progress', 'changes_requested'];
+  const isMutable = mutableStatuses.includes(experiment.status) && !experiment.is_locked && !experiment.is_archived;
 
   return {
-    canEditContent: isEditor && isMutable && !isLocked && !isArchived,
-    canEditMetadata: isEditor && isMutable && !isLocked && !isArchived,
-    canStart: isEditor && status === 'draft',
-    canComplete: isEditor && status === 'in_progress',
-    canReopen: isEditor && status === 'completed',
-    canSubmitReview: isEditor && isAuthor && (status === 'completed' || status === 'changes_requested'),
-    canReview: false, // determined per-review by reviewer_id match
-    canSign: false, // determined server-side by can_sign_experiment
-    canArchive: isEditor && !isArchived && status !== 'locked',
-    canRestore: isEditor && isArchived,
-    canCreateAmendment: isEditor && isLocked,
-    canRestoreRevision: isEditor && isMutable && !isLocked && !isArchived,
+    canEditContent: isEditor && isMutable,
+    canEditMetadata: isEditor && isMutable,
+    canStart: isEditor && experiment.status === 'draft',
+    canComplete: isEditor && experiment.status === 'in_progress',
+    canReopen: isEditor && experiment.status === 'completed' && !experiment.is_locked && !experiment.is_archived,
+    canSubmitReview: isEditor && isAuthor && ['completed', 'changes_requested'].includes(experiment.status) && !experiment.is_locked,
+    canReview: false,
+    canRequestChanges: false,
+    canApprove: false,
+    canSign: false,
+    canArchive: isEditor && !experiment.is_archived && !experiment.is_locked,
+    canRestore: isEditor && experiment.is_archived,
+    canRestoreRevision: isEditor && isMutable,
+    canCreateAmendment: isEditor && experiment.is_locked,
     canDuplicate: isEditor,
-    canComment: !isGuest,
-    isReadOnly: isGuest || !isMutable || isLocked,
-    role,
+    canComment: role !== 'guest',
+    isReadOnly: !isEditor || !isMutable,
+    role: role,
   };
+}
+
+export function useExperimentCapabilities(experiment: Experiment | null) {
+  const { members } = useWorkspaceStore();
+  const { user } = useAuthStore();
+  const [serverCaps, setServerCaps] = useState<ExperimentCapabilities | null>(null);
+
+  const userRole = useMemo(() => {
+    if (!user || !members.length) return null;
+    const member = members.find((m) => m.user_id === user.id);
+    return member?.role ?? null;
+  }, [user, members]);
+
+  const fallback = useMemo(
+    () => localFallback(experiment, userRole, user?.id ?? null),
+    [experiment, userRole, user]
+  );
+
+  useEffect(() => {
+    if (!experiment?.id) {
+      setServerCaps(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_experiment_capabilities', {
+          p_experiment_id: experiment.id,
+        });
+        if (cancelled || error || !data) return;
+        const d = data as Record<string, any>;
+        if (d.error) return;
+
+        setServerCaps({
+          canEditContent: d.can_edit_content ?? false,
+          canEditMetadata: d.can_edit_metadata ?? false,
+          canStart: d.can_start ?? false,
+          canComplete: d.can_complete ?? false,
+          canReopen: d.can_reopen ?? false,
+          canSubmitReview: d.can_submit_review ?? false,
+          canReview: d.can_review ?? false,
+          canRequestChanges: d.can_request_changes ?? false,
+          canApprove: d.can_approve ?? false,
+          canSign: d.can_sign ?? false,
+          canArchive: d.can_archive ?? false,
+          canRestore: d.can_restore ?? false,
+          canRestoreRevision: d.can_restore_revision ?? false,
+          canCreateAmendment: d.can_create_amendment ?? false,
+          canDuplicate: d.can_duplicate ?? false,
+          canComment: d.can_comment ?? false,
+          isReadOnly: d.is_read_only ?? true,
+          role: d.role ?? 'none',
+        });
+      } catch {
+        // Fall back to local derivation
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [experiment?.id, experiment?.status, experiment?.is_locked, experiment?.is_archived]);
+
+  return serverCaps ?? fallback;
 }

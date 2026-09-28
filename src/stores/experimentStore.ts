@@ -180,6 +180,7 @@ interface ExperimentActions {
     workspaceId: string,
     notebookId: string,
     title?: string,
+    folderId?: string,
     templateVersionId?: string
   ) => Promise<Experiment>;
   fetchExperiment: (id: string) => Promise<void>;
@@ -331,11 +332,12 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     }
   },
 
-  createExperiment: async (workspaceId, notebookId, title, templateVersionId) => {
+  createExperiment: async (workspaceId, notebookId, title, folderId, templateVersionId) => {
     const { data, error } = await supabase.rpc('create_experiment_rpc', {
       p_workspace_id: workspaceId,
       p_notebook_id: notebookId,
       p_title: title ?? 'Untitled Experiment',
+      p_folder_id: folderId ?? null,
       p_template_version_id: templateVersionId ?? null,
     });
     if (error) throw error;

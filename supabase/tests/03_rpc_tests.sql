@@ -1,6 +1,6 @@
 -- 03_rpc_tests.sql: test domain RPCs with real data as superuser
 BEGIN;
-SELECT plan(14);
+SELECT plan(15);
 
 -- ──────────────────────────────────────────────────────
 -- Setup test data hierarchy

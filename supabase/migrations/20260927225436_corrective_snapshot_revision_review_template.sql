@@ -1,6 +1,29 @@
 /*
-  Corrective migration: fix snapshot, revision lock, review model, template, delete version.
-  Prereq: old _create_revision_internal(uuid,text,text,uuid) already dropped via execute_sql.
+  # Corrective migration: snapshot, revision lock, review model, template, delete version
+
+  ## Summary
+  Fixes function signatures and semantics for clean replay from zero.
+  No manual/out-of-band SQL prerequisites.
+
+  ## Changes
+  - Adds metadata column to experiment_revisions (idempotent).
+  - Replaces _build_experiment_snapshot with corrected column names
+    (original_filename, original_value/actual_value, source/target_experiment_id, relation_type).
+    Snapshot excludes workflow status and block row_version.
+  - Drops old 4-arg _create_revision_internal(uuid,text,text,uuid) then creates
+    canonical 5-arg version with p_metadata jsonb. FOR UPDATE serialization lock.
+  - Replaces delete_experiment_block to make p_expected_version mandatory (not nullable).
+  - Replaces resubmit_for_review with append-only review model.
+  - Replaces create_experiment_rpc with corrected template validation (status='published'),
+    folder-notebook validation, fractional-indexing-compatible order keys.
+  - Replaces restore_experiment_revision with block-preserving diff/upsert/delete,
+    tag restoration, structured provenance metadata.
+  - Replaces complete_experiment to use canonical revision creator.
+
+  ## Security
+  - _build_experiment_snapshot: SECURITY DEFINER, revoked from PUBLIC/anon/authenticated.
+  - _create_revision_internal: SECURITY DEFINER, revoked from PUBLIC/anon/authenticated.
+  - All public RPCs: revoked from PUBLIC/anon, granted to authenticated only.
 */
 
 -- ═══════════════════════════════════════════════════════════════════════
@@ -17,7 +40,7 @@ END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 1. Canonical snapshot builder — scientific content only
---    Schema version 1 (corrected): no status, no row_version
+--    Schema version 1: excludes status and row_version
 -- ═══════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public._build_experiment_snapshot(p_experiment_id uuid)
 RETURNS jsonb
@@ -128,13 +151,17 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot FROM anon;
-REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot FROM authenticated;
+REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot(uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public._build_experiment_snapshot(uuid) FROM authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 2. _create_revision_internal — lock experiment row to serialize
+-- 2. _create_revision_internal — canonical 5-arg version
+--    First: remove old 4-arg overload created by prior migrations.
+--    Then: create the 5-arg version (new identity).
 -- ═══════════════════════════════════════════════════════════════════════
+DROP FUNCTION IF EXISTS public._create_revision_internal(uuid, text, text, uuid);
+
 CREATE FUNCTION public._create_revision_internal(
   p_experiment_id uuid,
   p_change_summary text,
@@ -181,9 +208,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public._create_revision_internal FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public._create_revision_internal FROM anon;
-REVOKE EXECUTE ON FUNCTION public._create_revision_internal FROM authenticated;
+REVOKE EXECUTE ON FUNCTION public._create_revision_internal(uuid, text, text, uuid, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public._create_revision_internal(uuid, text, text, uuid, jsonb) FROM anon;
+REVOKE EXECUTE ON FUNCTION public._create_revision_internal(uuid, text, text, uuid, jsonb) FROM authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 3. create_checkpoint — public wrapper
@@ -216,9 +243,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.create_checkpoint FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.create_checkpoint FROM anon;
-GRANT EXECUTE ON FUNCTION public.create_checkpoint TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.create_checkpoint(uuid, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.create_checkpoint(uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.create_checkpoint(uuid, text) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 4. resubmit_for_review — append-only review history
@@ -261,7 +288,7 @@ BEGIN
     (v_rev_result->>'revision_number')::int);
 
   INSERT INTO public.notifications (user_id, type, title, body, experiment_id)
-  VALUES (v_old_review.reviewer_id, 'review_resubmitted', 'Review resubmitted',
+  VALUES (v_old_review.reviewer_id, 'review_resubmitted', 'Experiment resubmitted',
     'An experiment has been resubmitted for your review', p_experiment_id);
 
   RETURN jsonb_build_object('review_id', v_new_review_id, 'revision_id', v_revision_id,
@@ -270,9 +297,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.resubmit_for_review FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.resubmit_for_review FROM anon;
-GRANT EXECUTE ON FUNCTION public.resubmit_for_review TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.resubmit_for_review(uuid, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.resubmit_for_review(uuid, uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.resubmit_for_review(uuid, uuid) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 5. create_experiment_rpc — fix template validation + order keys
@@ -373,14 +400,16 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.create_experiment_rpc FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.create_experiment_rpc FROM anon;
-GRANT EXECUTE ON FUNCTION public.create_experiment_rpc TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.create_experiment_rpc(uuid, uuid, text, uuid, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.create_experiment_rpc(uuid, uuid, text, uuid, uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.create_experiment_rpc(uuid, uuid, text, uuid, uuid) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 6. delete_experiment_block — version MANDATORY
+-- 6. delete_experiment_block — version MANDATORY, no default
+--    Same identity (uuid,uuid,bigint) as created in prior migration,
+--    so we use CREATE OR REPLACE to update the body.
 -- ═══════════════════════════════════════════════════════════════════════
-CREATE FUNCTION public.delete_experiment_block(
+CREATE OR REPLACE FUNCTION public.delete_experiment_block(
   p_experiment_id uuid,
   p_block_id uuid,
   p_expected_version bigint
@@ -419,9 +448,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.delete_experiment_block FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.delete_experiment_block FROM anon;
-GRANT EXECUTE ON FUNCTION public.delete_experiment_block TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.delete_experiment_block(uuid, uuid, bigint) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.delete_experiment_block(uuid, uuid, bigint) FROM anon;
+GRANT EXECUTE ON FUNCTION public.delete_experiment_block(uuid, uuid, bigint) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 7. restore_experiment_revision — full scientific content restoration
@@ -519,9 +548,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.restore_experiment_revision FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.restore_experiment_revision FROM anon;
-GRANT EXECUTE ON FUNCTION public.restore_experiment_revision TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.restore_experiment_revision(uuid, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.restore_experiment_revision(uuid, uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.restore_experiment_revision(uuid, uuid) TO authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 8. Fix complete_experiment
@@ -548,6 +577,12 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.complete_experiment FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.complete_experiment FROM anon;
-GRANT EXECUTE ON FUNCTION public.complete_experiment TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.complete_experiment(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.complete_experiment(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.complete_experiment(uuid) TO authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- 9. Drop all legacy create_revision variants (if any survived)
+-- ═══════════════════════════════════════════════════════════════════════
+DROP FUNCTION IF EXISTS public.create_revision(uuid, text, text);
+DROP FUNCTION IF EXISTS public.create_revision(uuid, text);

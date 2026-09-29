@@ -21,7 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import type { ExperimentRevision, AuditEvent, BlockType, BlockContent } from '@/lib/types';
-import ReadonlyBlockRenderer from '@/components/editor/ReadonlyBlockRenderer';
+import ReadonlyBlockRenderer, { type ProvenanceContext } from '@/components/editor/ReadonlyBlockRenderer';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -106,7 +106,18 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
     tags = [],
     protocols = [],
     attachments = [],
+    attachment_provenance = [],
+    protocol_provenance = [],
   } = snapshot;
+
+  const isV2 = attachment_provenance.length > 0 || protocol_provenance.length > 0;
+
+  const provenanceContext: ProvenanceContext | undefined = isV2
+    ? {
+        attachmentProvenance: attachment_provenance,
+        protocolProvenance: protocol_provenance,
+      }
+    : undefined;
 
   return (
     <div className="space-y-5">
@@ -135,6 +146,11 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
               {format(new Date(experiment_date), 'MMM d, yyyy')}
             </span>
           )}
+          {isV2 && (
+            <Badge variant="outline" className="text-[10px] font-mono border-green-300 text-green-700">
+              Provenance V2
+            </Badge>
+          )}
         </div>
 
         {tags.length > 0 && (
@@ -162,7 +178,16 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
               return 0;
             })
             .map((block: Record<string, unknown>, i: number) => (
-              <ReadonlyBlockRenderer key={(block.id as string) ?? i} type={block.type as BlockType} content={(block.content ?? {}) as BlockContent} />
+              <ReadonlyBlockRenderer
+                key={(block.id as string) ?? i}
+                type={block.type as BlockType}
+                content={(block.content ?? {}) as BlockContent}
+                provenanceContext={
+                  provenanceContext
+                    ? { ...provenanceContext, blockId: block.id as string }
+                    : undefined
+                }
+              />
             ))}
         </div>
       )}
@@ -205,6 +230,11 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
                 <span className="truncate">{(a.display_name as string) ?? (a.original_filename as string) ?? 'File'}</span>
                 {a.file_size != null && (
                   <span className="shrink-0 text-xs text-muted-foreground">({((a.file_size as number) / 1024).toFixed(1)} KB)</span>
+                )}
+                {a.checksum && (
+                  <span className="shrink-0 text-[10px] font-mono text-muted-foreground" title={`SHA-256: ${a.checksum}`}>
+                    #{String(a.checksum).slice(0, 6)}
+                  </span>
                 )}
               </div>
             ))}

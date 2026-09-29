@@ -104,6 +104,7 @@ export default function BlockRenderer({
           onUpdate={onUpdate}
           readOnly={readOnly}
           workspaceId={workspaceId}
+          experimentId={experimentId}
         />
       );
 

@@ -34,6 +34,7 @@ const DEFAULT_CONTENT: Record<BlockType, () => BlockContent> = {
   protocol: () => ({
     protocol_id: null,
     protocol_version_id: null,
+    experiment_protocol_id: null,
     protocol_name: '',
     version_number: 0,
     steps: [],
@@ -148,7 +149,17 @@ export default function BlockEditor({ experimentId, workspaceId, readOnly }: Blo
 
   const handleDuplicate = useCallback(
     async (block: ExperimentBlock) => {
-      await addBlock(experimentId, block.type, { ...block.content }, block.id);
+      const content = { ...block.content } as Record<string, unknown>;
+      if (block.type === 'image' || block.type === 'attachment') {
+        delete content.attachmentVersionId;
+        delete content.checksum;
+        delete content.versionNumber;
+      }
+      if (block.type === 'protocol') {
+        content.experiment_protocol_id = null;
+        content.deviations = [];
+      }
+      await addBlock(experimentId, block.type, content as BlockContent, block.id);
     },
     [experimentId, addBlock]
   );

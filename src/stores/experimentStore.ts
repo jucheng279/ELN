@@ -145,12 +145,38 @@ async function startAutosaveSession(experimentId: string) {
   window.addEventListener('beforeunload', handleBeforeUnload);
 }
 
-async function stopAutosaveSession() {
+async function stopAutosaveSession(): Promise<void> {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = null;
-  await flushPendingBlocks();
+
+  if (activeSavePromise) {
+    await activeSavePromise;
+  }
+
+  if (pendingBlockChanges.size > 0) {
+    await flushPendingBlocks({ throwOnError: true });
+  }
+
   activeExperimentId = null;
   window.removeEventListener('beforeunload', handleBeforeUnload);
+}
+
+async function discardPendingAndReload(): Promise<void> {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+
+  if (activeSavePromise) {
+    try { await activeSavePromise; } catch { /* already-running write settled */ }
+  }
+
+  pendingBlockChanges.clear();
+
+  const expId = activeExperimentId;
+  if (!expId) return;
+
+  const state = useExperimentStore.getState();
+  state._setSaveState('clean');
+  await state.fetchExperiment(expId);
 }
 
 // ──────────────────────────────────────────────
@@ -230,6 +256,7 @@ interface ExperimentActions {
 
   retryPendingSave: () => Promise<void>;
   reloadFromServer: () => Promise<void>;
+  discardAndReload: () => Promise<void>;
   hasPendingChanges: () => boolean;
   initSession: (experimentId: string) => void;
   teardownSession: () => Promise<void>;
@@ -276,10 +303,17 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     pendingBlockChanges.clear();
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = null;
+    if (activeSavePromise) {
+      try { await activeSavePromise; } catch { /* settle in-flight write */ }
+    }
     activeSavePromise = null;
     const state = useExperimentStore.getState();
     state._setSaveState('clean');
     await state.fetchExperiment(expId);
+  },
+
+  discardAndReload: async () => {
+    await discardPendingAndReload();
   },
 
   hasPendingChanges: () => {

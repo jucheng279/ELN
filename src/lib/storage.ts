@@ -1,12 +1,30 @@
 import { supabase } from '@/lib/supabase';
+import { computeSha256 } from '@/lib/crypto';
 
 const BUCKET = 'eln-files';
+
+export interface UploadResult {
+  path: string;
+  attachmentId: string;
+  attachmentVersionId: string;
+  versionNumber: number;
+  checksum: string;
+}
+
+export interface ReplaceResult {
+  path: string;
+  attachmentVersionId: string;
+  versionNumber: number;
+  checksum: string;
+}
 
 export async function uploadFile(
   workspaceId: string,
   experimentId: string,
   file: File
-): Promise<{ path: string; attachmentId: string; versionId: string }> {
+): Promise<UploadResult> {
+  const checksum = await computeSha256(file);
+
   const timestamp = Date.now();
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `${workspaceId}/${experimentId}/${timestamp}_${safeName}`;
@@ -23,16 +41,20 @@ export async function uploadFile(
     p_storage_path: path,
     p_mime_type: file.type || 'application/octet-stream',
     p_file_size: file.size,
+    p_checksum: checksum,
   });
   if (rpcError) {
     await supabase.storage.from(BUCKET).remove([path]).catch(() => {});
     throw rpcError;
   }
 
+  const result = data as Record<string, unknown>;
   return {
     path,
-    attachmentId: (data as Record<string, unknown>).attachment_id as string,
-    versionId: (data as Record<string, unknown>).version_id as string,
+    attachmentId: result.attachment_id as string,
+    attachmentVersionId: (result.attachment_version_id ?? result.version_id) as string,
+    versionNumber: 1,
+    checksum,
   };
 }
 
@@ -41,7 +63,9 @@ export async function replaceFile(
   experimentId: string,
   attachmentId: string,
   file: File
-): Promise<{ path: string; versionId: string; versionNumber: number }> {
+): Promise<ReplaceResult> {
+  const checksum = await computeSha256(file);
+
   const timestamp = Date.now();
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `${workspaceId}/${experimentId}/${timestamp}_${safeName}`;
@@ -55,16 +79,22 @@ export async function replaceFile(
     p_attachment_id: attachmentId,
     p_storage_path: path,
     p_file_size: file.size,
+    p_checksum: checksum,
+    p_original_filename: file.name,
+    p_display_name: file.name,
+    p_mime_type: file.type || 'application/octet-stream',
   });
   if (rpcError) {
     await supabase.storage.from(BUCKET).remove([path]).catch(() => {});
     throw rpcError;
   }
 
+  const result = data as Record<string, unknown>;
   return {
     path,
-    versionId: (data as Record<string, unknown>).version_id as string,
-    versionNumber: (data as Record<string, unknown>).version_number as number,
+    attachmentVersionId: (result.attachment_version_id ?? result.version_id) as string,
+    versionNumber: result.version_number as number,
+    checksum,
   };
 }
 

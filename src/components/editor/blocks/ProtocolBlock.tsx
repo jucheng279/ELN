@@ -1,13 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
-import { ClipboardList, Clock, Thermometer, AlertTriangle, Check, X, Search, Loader2 } from 'lucide-react';
+import { ClipboardList, Clock, Thermometer, AlertTriangle, Check, X, Search, Loader2, Shield } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { ProtocolBlockContent, ProtocolStep, ProtocolDevBlockEntry } from '@/lib/types';
+import type { ProtocolBlockContent, ProtocolStep, ProtocolDevBlockEntry, ExperimentProtocolSnapshot } from '@/lib/types';
 
 interface ProtocolBlockProps {
   content: ProtocolBlockContent;
   onUpdate: (content: ProtocolBlockContent) => void;
   readOnly: boolean;
   workspaceId?: string;
+  experimentId?: string;
 }
 
 interface ProtocolSearchResult {
@@ -17,7 +18,7 @@ interface ProtocolSearchResult {
   current_version: number;
 }
 
-export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId }: ProtocolBlockProps) {
+export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId, experimentId }: ProtocolBlockProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ProtocolSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -25,6 +26,48 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
   const [loading, setLoading] = useState(false);
   const [activeDeviationIndex, setActiveDeviationIndex] = useState<number | null>(null);
   const [deviationForm, setDeviationForm] = useState({ actual_value: '', reason: '' });
+  const [relationalDeviations, setRelationalDeviations] = useState<ProtocolDevBlockEntry[]>([]);
+  const [snapshotSteps, setSnapshotSteps] = useState<ProtocolStep[]>([]);
+
+  useEffect(() => {
+    if (content.experiment_protocol_id) {
+      void loadRelationalData(content.experiment_protocol_id);
+    } else {
+      setRelationalDeviations([]);
+      setSnapshotSteps(content.steps ?? []);
+    }
+  }, [content.experiment_protocol_id]);
+
+  async function loadRelationalData(epId: string) {
+    const { data: ep } = await supabase
+      .from('experiment_protocols')
+      .select('snapshot')
+      .eq('id', epId)
+      .maybeSingle();
+
+    if (ep?.snapshot) {
+      const snap = ep.snapshot as ExperimentProtocolSnapshot;
+      setSnapshotSteps(snap.steps ?? []);
+    }
+
+    const { data: devs } = await supabase
+      .from('protocol_deviations')
+      .select('*')
+      .eq('experiment_protocol_id', epId)
+      .order('step_index', { ascending: true });
+
+    if (devs) {
+      setRelationalDeviations(devs.map((d) => ({
+        step_index: d.step_index,
+        original_value: d.original_value,
+        actual_value: d.actual_value,
+        reason: d.reason,
+      })));
+    }
+  }
+
+  const steps = content.experiment_protocol_id ? snapshotSteps : (content.steps ?? []);
+  const deviations = content.experiment_protocol_id ? relationalDeviations : (content.deviations ?? []);
 
   useEffect(() => {
     if (!searchQuery.trim() || !workspaceId) {
@@ -53,42 +96,63 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
 
   const handleSelectProtocol = useCallback(
     async (protocol: ProtocolSearchResult) => {
+      if (!experimentId) return;
       setLoading(true);
       try {
         const { data: version } = await supabase
           .from('protocol_versions')
           .select('*')
           .eq('protocol_id', protocol.id)
-          .eq('version_number', protocol.current_version)
+          .eq('status', 'published')
+          .order('version_number', { ascending: false })
+          .limit(1)
           .maybeSingle();
 
-        const steps: ProtocolStep[] = version?.steps ?? [];
+        if (!version) {
+          console.error('No published version found');
+          return;
+        }
+
+        const { data: result, error } = await supabase.rpc('attach_protocol_to_experiment', {
+          p_experiment_id: experimentId,
+          p_protocol_version_id: version.id,
+        });
+
+        if (error) throw error;
+
+        const res = result as {
+          experiment_protocol_id: string;
+          protocol_id: string;
+          protocol_version_id: string;
+          snapshot: ExperimentProtocolSnapshot;
+        };
 
         onUpdate({
           ...content,
-          protocol_id: protocol.id,
-          protocol_version_id: version?.id ?? null,
-          protocol_name: protocol.name,
-          version_number: version?.version_number ?? protocol.current_version,
-          steps,
+          protocol_id: res.protocol_id,
+          protocol_version_id: res.protocol_version_id,
+          experiment_protocol_id: res.experiment_protocol_id,
+          protocol_name: res.snapshot.protocol_name,
+          version_number: res.snapshot.version_number,
+          steps: res.snapshot.steps,
           deviations: [],
         });
         setShowSearch(false);
         setSearchQuery('');
       } catch (err) {
-        console.error('Failed to load protocol:', err);
+        console.error('Failed to attach protocol:', err);
       } finally {
         setLoading(false);
       }
     },
-    [content, onUpdate]
+    [content, onUpdate, experimentId]
   );
 
   const getDeviationForStep = useCallback(
     (stepIndex: number): ProtocolDevBlockEntry | undefined => {
-      return content.deviations?.find((d) => d.step_index === stepIndex);
+      return deviations.find((d) => d.step_index === stepIndex);
     },
-    [content.deviations]
+    [deviations]
   );
 
   const handleStepClick = useCallback(
@@ -109,32 +173,59 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
     [readOnly, activeDeviationIndex, getDeviationForStep]
   );
 
-  const handleSaveDeviation = useCallback(() => {
+  const handleSaveDeviation = useCallback(async () => {
     if (activeDeviationIndex === null) return;
-    const step = content.steps[activeDeviationIndex];
+    const step = steps[activeDeviationIndex];
     if (!step) return;
 
-    const existingDeviations = content.deviations ?? [];
-    const filtered = existingDeviations.filter((d) => d.step_index !== activeDeviationIndex);
-    const newDeviation: ProtocolDevBlockEntry = {
-      step_index: activeDeviationIndex,
-      original_value: step.instruction,
-      actual_value: deviationForm.actual_value,
-      reason: deviationForm.reason,
-    };
+    if (content.experiment_protocol_id) {
+      const { error } = await supabase.rpc('upsert_protocol_deviation', {
+        p_experiment_protocol_id: content.experiment_protocol_id,
+        p_step_index: activeDeviationIndex,
+        p_actual_value: deviationForm.actual_value,
+        p_reason: deviationForm.reason,
+      });
+      if (error) {
+        console.error('Failed to save deviation:', error);
+        return;
+      }
+      await loadRelationalData(content.experiment_protocol_id);
+    } else {
+      const existingDeviations = content.deviations ?? [];
+      const filtered = existingDeviations.filter((d) => d.step_index !== activeDeviationIndex);
+      const newDeviation: ProtocolDevBlockEntry = {
+        step_index: activeDeviationIndex,
+        original_value: step.instruction,
+        actual_value: deviationForm.actual_value,
+        reason: deviationForm.reason,
+      };
+      onUpdate({
+        ...content,
+        deviations: [...filtered, newDeviation],
+      });
+    }
 
-    onUpdate({
-      ...content,
-      deviations: [...filtered, newDeviation],
-    });
     setActiveDeviationIndex(null);
     setDeviationForm({ actual_value: '', reason: '' });
-  }, [activeDeviationIndex, content, deviationForm, onUpdate]);
+  }, [activeDeviationIndex, content, steps, deviationForm, onUpdate]);
 
   const handleCancelDeviation = useCallback(() => {
     setActiveDeviationIndex(null);
     setDeviationForm({ actual_value: '', reason: '' });
   }, []);
+
+  const handleRemoveProtocol = useCallback(() => {
+    onUpdate({
+      ...content,
+      protocol_id: null,
+      protocol_version_id: null,
+      experiment_protocol_id: null,
+      protocol_name: '',
+      version_number: 0,
+      steps: [],
+      deviations: [],
+    });
+  }, [content, onUpdate]);
 
   if (!content.protocol_name) {
     return (
@@ -212,9 +303,15 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
         <span className="text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">
           v{content.version_number}
         </span>
+        {content.experiment_protocol_id && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-mono text-gray-400" title="Relational protocol instance">
+            <Shield className="h-2.5 w-2.5" />
+            pinned
+          </span>
+        )}
         {!readOnly && (
           <button
-            onClick={() => onUpdate({ ...content, protocol_id: null, protocol_version_id: null, protocol_name: '', version_number: 0, steps: [], deviations: [] })}
+            onClick={handleRemoveProtocol}
             className="ml-auto text-xs text-gray-400 hover:text-red-500"
           >
             Remove
@@ -222,13 +319,13 @@ export default function ProtocolBlock({ content, onUpdate, readOnly, workspaceId
         )}
       </div>
 
-      {content.steps.length === 0 ? (
+      {steps.length === 0 ? (
         <div className="px-4 py-6 text-center">
           <p className="text-sm text-gray-400">This protocol has no steps defined yet.</p>
         </div>
       ) : (
         <div className="divide-y divide-gray-100">
-          {content.steps.map((step, index) => {
+          {steps.map((step, index) => {
             const deviation = getDeviationForStep(index);
             const isDeviationFormOpen = activeDeviationIndex === index;
             const hasDeviation = !!deviation;

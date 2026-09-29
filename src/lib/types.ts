@@ -200,7 +200,9 @@ export interface ImageContent {
   fileSize: number;
   storagePath?: string;
   attachmentId?: string;
+  attachmentVersionId?: string;
   versionNumber?: number;
+  checksum?: string;
   url?: string;
 }
 
@@ -211,7 +213,9 @@ export interface AttachmentContent {
   fileSize: number;
   storagePath: string;
   attachmentId: string;
+  attachmentVersionId?: string;
   versionNumber: number;
+  checksum?: string;
   caption: string;
 }
 
@@ -230,6 +234,7 @@ export interface ProtocolDevBlockEntry {
 export interface ProtocolBlockContent {
   protocol_id: string | null;
   protocol_version_id: string | null;
+  experiment_protocol_id: string | null;
   protocol_name: string;
   version_number: number;
   steps: ProtocolStep[];
@@ -391,12 +396,23 @@ export interface ProtocolVersion {
   created_at: string;
 }
 
+export interface ExperimentProtocolSnapshot {
+  schema_version: number;
+  protocol_id: string;
+  protocol_version_id: string;
+  protocol_name: string;
+  version_number: number;
+  steps: ProtocolStep[];
+  parameters: Record<string, unknown> | null;
+  notes: string | null;
+}
+
 export interface ExperimentProtocol {
   id: string;
   experiment_id: string;
   protocol_id: string;
   protocol_version_id: string;
-  snapshot: ProtocolStep[];
+  snapshot: ExperimentProtocolSnapshot;
   created_at: string;
   protocol?: Protocol;
   version?: ProtocolVersion;
@@ -465,6 +481,10 @@ export interface AttachmentVersion {
   storage_path: string;
   file_size: number;
   checksum: string | null;
+  original_filename: string | null;
+  display_name: string | null;
+  mime_type: string | null;
+  source_attachment_version_id: string | null;
   uploaded_by: string;
   created_at: string;
 }

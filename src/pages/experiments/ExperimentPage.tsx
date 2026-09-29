@@ -281,9 +281,13 @@ export default function ExperimentPage() {
               <AlertDialogCancel onClick={() => blocker.reset()}>Stay</AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
-                onClick={() => {
-                  useExperimentStore.getState().reloadFromServer();
-                  blocker.proceed();
+                onClick={async () => {
+                  try {
+                    await useExperimentStore.getState().discardAndReload();
+                    blocker.proceed();
+                  } catch {
+                    blocker.reset();
+                  }
                 }}
               >
                 Discard and leave

@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
-import { Upload, Download, X, RefreshCw, Loader2 } from 'lucide-react';
-import { uploadFile, replaceFile, archiveAttachment, getSignedUrl } from '@/lib/storage';
+import { Upload, Download, X, RefreshCw, Loader2, Shield } from 'lucide-react';
+import { uploadFile, replaceFile, getSignedUrl } from '@/lib/storage';
 import type { AttachmentContent } from '@/lib/types';
 
 const DEFAULT_CONTENT: AttachmentContent = {
@@ -10,7 +10,9 @@ const DEFAULT_CONTENT: AttachmentContent = {
   fileSize: 0,
   storagePath: '',
   attachmentId: '',
+  attachmentVersionId: undefined,
   versionNumber: 0,
+  checksum: undefined,
   caption: '',
 };
 
@@ -29,6 +31,11 @@ function getFileIcon(mimeType: string): string {
   if (mimeType.includes('zip') || mimeType.includes('compress')) return 'ZIP';
   if (mimeType.startsWith('text/')) return 'TXT';
   return 'FILE';
+}
+
+function checksumFingerprint(checksum: string | undefined): string | null {
+  if (!checksum || checksum.length < 12) return null;
+  return `${checksum.slice(0, 6)}...${checksum.slice(-4)}`;
 }
 
 export default function AttachmentBlock({
@@ -68,7 +75,9 @@ export default function AttachmentBlock({
           mimeType: file.type || 'application/octet-stream',
           fileSize: file.size,
           storagePath: result.path,
+          attachmentVersionId: result.attachmentVersionId,
           versionNumber: result.versionNumber,
+          checksum: result.checksum,
         });
       } else {
         const result = await uploadFile(workspaceId, experimentId, file);
@@ -80,7 +89,9 @@ export default function AttachmentBlock({
           fileSize: file.size,
           storagePath: result.path,
           attachmentId: result.attachmentId,
+          attachmentVersionId: result.attachmentVersionId,
           versionNumber: 1,
+          checksum: result.checksum,
         });
       }
     } catch (err: unknown) {
@@ -101,14 +112,7 @@ export default function AttachmentBlock({
     }
   }
 
-  async function handleRemove() {
-    if (data.attachmentId) {
-      try {
-        await archiveAttachment(data.attachmentId);
-      } catch {
-        return;
-      }
-    }
+  function handleRemove() {
     onUpdate(DEFAULT_CONTENT);
   }
 
@@ -144,6 +148,7 @@ export default function AttachmentBlock({
   }
 
   const typeLabel = getFileIcon(data.mimeType);
+  const fingerprint = checksumFingerprint(data.checksum);
 
   return (
     <div className="rounded-lg border border-border bg-background">
@@ -158,7 +163,15 @@ export default function AttachmentBlock({
               <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-mono text-muted-foreground">v{data.versionNumber}</span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">{formatFileSize(data.fileSize)}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-muted-foreground">{formatFileSize(data.fileSize)}</p>
+            {fingerprint && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-mono text-muted-foreground" title={`SHA-256 ${data.checksum}`}>
+                <Shield className="h-2.5 w-2.5" />
+                {fingerprint}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-0.5">
           <button onClick={handleDownload} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Download">

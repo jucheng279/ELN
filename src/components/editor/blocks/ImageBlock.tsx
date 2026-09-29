@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, DragEvent, ChangeEvent } from 'react';
-import { Upload, X, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { uploadFile, replaceFile, archiveAttachment, getSignedUrl } from '@/lib/storage';
+import { Upload, X, Image as ImageIcon, Loader2, Shield } from 'lucide-react';
+import { uploadFile, replaceFile, getSignedUrl } from '@/lib/storage';
 import type { ImageContent } from '@/lib/types';
 
 interface ImageBlockProps {
@@ -16,6 +16,11 @@ function formatFileSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function checksumFingerprint(checksum: string | undefined): string | null {
+  if (!checksum || checksum.length < 12) return null;
+  return `${checksum.slice(0, 6)}...${checksum.slice(-4)}`;
 }
 
 export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, experimentId }: ImageBlockProps) {
@@ -59,9 +64,11 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
           onUpdate({
             ...content,
             storagePath: result.path,
+            attachmentVersionId: result.attachmentVersionId,
             filename: file.name,
             fileSize: file.size,
             versionNumber: result.versionNumber,
+            checksum: result.checksum,
           });
           setResolvedUrl(signed);
         } else {
@@ -71,9 +78,11 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
             ...content,
             storagePath: result.path,
             attachmentId: result.attachmentId,
+            attachmentVersionId: result.attachmentVersionId,
             filename: file.name,
             fileSize: file.size,
             versionNumber: 1,
+            checksum: result.checksum,
           });
           setResolvedUrl(signed);
         }
@@ -115,13 +124,19 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
     if (!readOnly && !uploading) fileInputRef.current?.click();
   }, [readOnly, uploading]);
 
-  const removeImage = useCallback(async () => {
-    if (attachmentId) {
-      await archiveAttachment(attachmentId).catch(() => {});
-    }
-    onUpdate({ ...content, filename: '', fileSize: 0, storagePath: undefined, attachmentId: undefined, versionNumber: undefined });
+  const removeImage = useCallback(() => {
+    onUpdate({
+      ...content,
+      filename: '',
+      fileSize: 0,
+      storagePath: undefined,
+      attachmentId: undefined,
+      attachmentVersionId: undefined,
+      versionNumber: undefined,
+      checksum: undefined,
+    });
     setResolvedUrl('');
-  }, [content, onUpdate, attachmentId]);
+  }, [content, onUpdate]);
 
   if (!resolvedUrl && !storagePath) {
     if (readOnly) {
@@ -158,6 +173,8 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
     );
   }
 
+  const fingerprint = checksumFingerprint(content.checksum);
+
   return (
     <div className="w-full">
       <div
@@ -185,7 +202,20 @@ export default function ImageBlock({ content, onUpdate, readOnly, workspaceId, e
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
       </div>
 
-      {filename && <div className="mt-1.5 text-xs text-muted-foreground">{filename} &middot; {formatFileSize(fileSize)}{content.versionNumber && content.versionNumber > 1 ? ` \u00b7 v${content.versionNumber}` : ''}</div>}
+      {filename && (
+        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>{filename} &middot; {formatFileSize(fileSize)}</span>
+          {content.versionNumber && content.versionNumber > 1 && (
+            <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">v{content.versionNumber}</span>
+          )}
+          {fingerprint && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1 py-0.5 font-mono text-[10px]" title={`SHA-256 ${content.checksum}`}>
+              <Shield className="h-2.5 w-2.5" />
+              {fingerprint}
+            </span>
+          )}
+        </div>
+      )}
 
       {readOnly ? (
         caption && <p className="mt-2 text-sm text-muted-foreground italic">{caption}</p>

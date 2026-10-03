@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { Experiment } from '@/lib/types';
 import { Star, MoveHorizontal as MoreHorizontal, X, Plus, Calendar, FileDown, Lock, Loader as Loader2, Check, Clock, Copy, Archive, Play, CircleCheck as CheckCircle, RotateCcw } from 'lucide-react';
-import { exportExperimentPdf } from '@/lib/pdfExport';
+import { exportLivePdf, exportSignedRevisionPdf } from '@/lib/pdfExport';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -247,10 +247,17 @@ export default function ExperimentHeader({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={async () => {
-              const { blocks } = useExperimentStore.getState();
-              await exportExperimentPdf(experiment, blocks);
+              if (!experiment.is_locked) {
+                exportLivePdf(experiment, useExperimentStore.getState().blocks);
+                return;
+              }
+              try {
+                await exportSignedRevisionPdf(experiment);
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Could not export the signed record');
+              }
             }}>
-              <FileDown className="h-4 w-4" /> Export PDF
+              <FileDown className="h-4 w-4" /> {experiment.is_locked ? 'Export signed PDF' : 'Export PDF'}
             </DropdownMenuItem>
             {caps.canArchive && (
               <>

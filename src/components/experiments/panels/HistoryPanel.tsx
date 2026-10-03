@@ -15,11 +15,13 @@ import {
   Hash,
   Paperclip,
   FlaskConical,
+  FileDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
+import { exportRevisionPdf } from '@/lib/pdfExport';
 import type { ExperimentRevision, AuditEvent, BlockType, BlockContent } from '@/lib/types';
 import ReadonlyBlockRenderer, { type ProvenanceContext } from '@/components/editor/ReadonlyBlockRenderer';
 import { Button } from '@/components/ui/button';
@@ -259,6 +261,7 @@ export default function HistoryPanel() {
   const [hasMore, setHasMore] = useState(false);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [viewingRevision, setViewingRevision] =
     useState<ExperimentRevision | null>(null);
 
@@ -579,6 +582,29 @@ export default function HistoryPanel() {
             </Collapsible>
 
             <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={exporting || !currentExperiment}
+                onClick={async () => {
+                  if (!currentExperiment) return;
+                  setExporting(true);
+                  try {
+                    await exportRevisionPdf(currentExperiment, viewingRevision);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Could not export this revision');
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                {exporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="h-3.5 w-3.5" />
+                )}
+                Export PDF
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import type {
   Experiment,
   ExperimentBlock,
+  ExperimentRevision,
   HeadingContent,
   ParagraphContent,
   ResultContent,
@@ -20,6 +21,16 @@ import type {
   ProtocolDevBlockEntry,
 } from '@/lib/types';
 import { format } from 'date-fns';
+import { supabase } from '@/lib/supabase';
+import {
+  assembleLivePdfModel,
+  assembleRevisionPdfModel,
+  pdfFileName,
+  type PdfModel,
+  type SignatureRow,
+} from '@/lib/pdfModel';
+
+const SIGNATURE_SELECT = '*, signer:profiles!signatures_signer_id_fkey(id, display_name)';
 
 function stripHtml(html: string): string {
   const div = document.createElement('div');
@@ -27,18 +38,21 @@ function stripHtml(html: string): string {
   return div.textContent || div.innerText || '';
 }
 
-export async function exportExperimentPdf(
-  experiment: Experiment,
-  blocks: ExperimentBlock[],
-  options?: {
-    signatures?: Array<{ signer?: { display_name: string }; revision_number: number; signed_at: string; declaration: string }>;
-    reviews?: Array<{ reviewer?: { display_name: string }; status: string; reviewed_at: string; comment?: string }>;
-  }
-) {
+function formatUtc(iso: string, pattern = 'yyyy-MM-dd HH:mm:ss'): string {
+  const d = new Date(iso);
+  return format(new Date(d.getTime() + d.getTimezoneOffset() * 60000), pattern) + ' UTC';
+}
+
+function renderPdf(model: PdfModel) {
   const doc = new jsPDF('p', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 20;
   const contentWidth = pageWidth - margin * 2;
+  const record = model.record;
+  const footerLabel =
+    record.kind === 'live'
+      ? `${model.experimentId} - working copy (unsigned)`
+      : `${model.experimentId} - revision v${record.revisionNumber}`;
   let y = margin;
 
   function addPage() {
@@ -56,63 +70,46 @@ export async function exportExperimentPdf(
 
   function addFooter() {
     const pageHeight = doc.internal.pageSize.getHeight();
-    const pageCount = doc.getNumberOfPages();
     doc.setFontSize(8);
     doc.setTextColor(150);
-    doc.text(
-      `Page ${pageCount}`,
-      pageWidth / 2,
-      pageHeight - 10,
-      { align: 'center' }
-    );
-    doc.text(
-      `Exported: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')} UTC`,
-      margin,
-      pageHeight - 10
-    );
-    doc.text(
-      experiment.experiment_id,
-      pageWidth - margin,
-      pageHeight - 10,
-      { align: 'right' }
-    );
+    doc.text(`Exported: ${formatUtc(new Date().toISOString())}`, margin, pageHeight - 10);
+    doc.text(footerLabel, pageWidth - margin, pageHeight - 10, { align: 'right' });
+  }
+
+  function writeWrapped(text: string, x: number, lineHeight: number) {
+    const lines = doc.splitTextToSize(text, pageWidth - margin - x);
+    for (const line of lines) {
+      checkSpace(lineHeight);
+      doc.text(line, x, y);
+      y += lineHeight;
+    }
   }
 
   addFooter();
 
-  // Title section
   doc.setFontSize(10);
   doc.setTextColor(100);
-  doc.text(experiment.experiment_id, margin, y);
+  doc.text(model.experimentId, margin, y);
   y += 6;
 
   doc.setFontSize(18);
   doc.setTextColor(30);
-  const titleLines = doc.splitTextToSize(experiment.title, contentWidth);
+  const titleLines = doc.splitTextToSize(model.title, contentWidth);
   doc.text(titleLines, margin, y);
   y += titleLines.length * 8 + 4;
 
-  // Metadata table
-  doc.setFontSize(9);
-  doc.setTextColor(80);
-
-  const metaRows: [string, string][] = [
-    ['Status', experiment.status.replace(/_/g, ' ').toUpperCase()],
-    ['Experiment Date', experiment.experiment_date || ''],
-    ['Created', format(new Date(experiment.created_at), 'yyyy-MM-dd HH:mm')],
-    ['Last Modified', format(new Date(experiment.updated_at), 'yyyy-MM-dd HH:mm')],
-    ['Revision', `${experiment.current_revision}`],
-  ];
-
-  if (experiment.notebook) {
-    metaRows.unshift(['Notebook', experiment.notebook.name]);
+  const metaRows: [string, string][] = [];
+  if (model.notebookName) metaRows.push(['Notebook', model.notebookName]);
+  if (record.kind === 'live') {
+    metaRows.push(['Record', 'Working copy (not a signed record)']);
+  } else {
+    metaRows.push(['Record', record.signature ? `Signed revision v${record.revisionNumber}` : `Revision v${record.revisionNumber}`]);
+    metaRows.push(['Revision created', formatUtc(record.createdAt, 'yyyy-MM-dd HH:mm')]);
   }
-  if (experiment.created_by_profile) {
-    metaRows.push(['Author', experiment.created_by_profile.display_name]);
-  }
-  if (experiment.tags && experiment.tags.length > 0) {
-    metaRows.push(['Tags', experiment.tags.map(t => t.name).join(', ')]);
-  }
+  metaRows.push(['Experiment Date', model.experimentDate || '']);
+  if (model.authorName) metaRows.push(['Author', model.authorName]);
+  if (model.tags.length > 0) metaRows.push(['Tags', model.tags.join(', ')]);
+  if (record.kind === 'revision') metaRows.push(['Content hash', record.contentHash]);
 
   autoTable(doc, {
     startY: y,
@@ -122,21 +119,17 @@ export async function exportExperimentPdf(
     styles: { fontSize: 9, cellPadding: 2 },
     columnStyles: {
       0: { fontStyle: 'bold', cellWidth: 35, textColor: [100, 100, 100] },
-      1: { textColor: [30, 30, 30] },
+      1: { textColor: [30, 30, 30], overflow: 'linebreak' },
     },
   });
 
   y = (doc as unknown as Record<string, { finalY: number }>).lastAutoTable.finalY + 8;
 
-  // Divider
   doc.setDrawColor(200);
   doc.line(margin, y, pageWidth - margin, y);
   y += 8;
 
-  // Blocks
-  const sortedBlocks = [...blocks].sort((a, b) => a.order_key.localeCompare(b.order_key));
-
-  for (const block of sortedBlocks) {
+  for (const block of model.blocks) {
     switch (block.type) {
       case 'heading': {
         const c = block.content as HeadingContent;
@@ -306,7 +299,7 @@ export async function exportExperimentPdf(
         checkSpace(8);
         doc.setFontSize(9);
         doc.setTextColor(80);
-        doc.text(`\u{1F4CE} ${c.displayName || c.filename}`, margin + 4, y);
+        doc.text(`Attachment: ${c.displayName || c.filename}`, margin + 4, y);
         y += 5;
         if (c.caption) {
           doc.setFontSize(8);
@@ -438,57 +431,25 @@ export async function exportExperimentPdf(
     }
   }
 
-  // Signatures section
-  if (options?.signatures && options.signatures.length > 0) {
-    checkSpace(20);
+  if (record.kind === 'revision' && record.signature) {
+    const sig = record.signature;
+    checkSpace(40);
     doc.setDrawColor(200);
     doc.line(margin, y, pageWidth - margin, y);
     y += 8;
     doc.setFontSize(12);
     doc.setTextColor(20);
-    doc.text('Electronic Signatures', margin, y);
+    doc.text('Electronic Signature', margin, y);
     y += 7;
-
-    for (const sig of options.signatures) {
-      checkSpace(15);
-      doc.setFontSize(9);
-      doc.setTextColor(60);
-      doc.text(`Signer: ${sig.signer?.display_name || 'Unknown'}`, margin + 4, y);
-      y += 5;
-      doc.text(`Revision: ${sig.revision_number}`, margin + 4, y);
-      y += 5;
-      doc.text(`Date: ${format(new Date(sig.signed_at), 'yyyy-MM-dd HH:mm:ss')} UTC`, margin + 4, y);
-      y += 5;
-      doc.text(`Declaration: ${sig.declaration}`, margin + 4, y);
-      y += 7;
-    }
+    doc.setFontSize(9);
+    doc.setTextColor(60);
+    writeWrapped(`Signer: ${sig.signerName}`, margin + 4, 5);
+    writeWrapped(`Signed at: ${formatUtc(sig.signedAt)}`, margin + 4, 5);
+    writeWrapped(`Signed revision: v${sig.revisionNumber}`, margin + 4, 5);
+    writeWrapped(`Content hash (SHA-256): ${sig.contentHash}`, margin + 4, 5);
+    writeWrapped(`Declaration: ${sig.declaration}`, margin + 4, 5);
   }
 
-  // Reviews section
-  if (options?.reviews && options.reviews.length > 0) {
-    checkSpace(15);
-    doc.setFontSize(11);
-    doc.setTextColor(20);
-    doc.text('Review History', margin, y);
-    y += 6;
-
-    for (const rev of options.reviews) {
-      checkSpace(10);
-      doc.setFontSize(9);
-      doc.setTextColor(60);
-      doc.text(
-        `${rev.reviewer?.display_name || 'Reviewer'}: ${rev.status.replace(/_/g, ' ')} (${rev.reviewed_at ? format(new Date(rev.reviewed_at), 'yyyy-MM-dd') : 'pending'})`,
-        margin + 4, y
-      );
-      y += 5;
-      if (rev.comment) {
-        doc.text(`Comment: ${rev.comment}`, margin + 8, y);
-        y += 5;
-      }
-    }
-  }
-
-  // Update page count in all footers
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
@@ -498,5 +459,49 @@ export async function exportExperimentPdf(
     doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
   }
 
-  doc.save(`${experiment.experiment_id}_${experiment.title.replace(/\s+/g, '_').slice(0, 40)}.pdf`);
+  doc.save(pdfFileName(model));
+}
+
+export function exportLivePdf(experiment: Experiment, blocks: ExperimentBlock[]) {
+  renderPdf(assembleLivePdfModel(experiment, blocks));
+}
+
+async function signatureForRevision(revisionId: string): Promise<SignatureRow | null> {
+  const { data, error } = await supabase
+    .from('signatures')
+    .select(SIGNATURE_SELECT)
+    .eq('experiment_revision_id', revisionId)
+    .order('signed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error('Could not load the signature for this revision');
+  return (data as SignatureRow | null) ?? null;
+}
+
+export async function exportRevisionPdf(experiment: Experiment, revision: ExperimentRevision) {
+  const signature = await signatureForRevision(revision.id);
+  renderPdf(assembleRevisionPdfModel(experiment, revision, signature));
+}
+
+export async function exportSignedRevisionPdf(experiment: Experiment) {
+  const { data: signature, error: sigError } = await supabase
+    .from('signatures')
+    .select(SIGNATURE_SELECT)
+    .eq('experiment_id', experiment.id)
+    .order('signed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (sigError) throw new Error('Could not load the signature for this experiment');
+  const sig = signature as SignatureRow | null;
+  if (!sig?.experiment_revision_id) throw new Error('No signed revision was found for this experiment');
+
+  const { data: revision, error: revError } = await supabase
+    .from('experiment_revisions')
+    .select('*')
+    .eq('id', sig.experiment_revision_id)
+    .eq('experiment_id', experiment.id)
+    .single();
+  if (revError || !revision) throw new Error('Could not load the signed revision');
+
+  renderPdf(assembleRevisionPdfModel(experiment, revision as ExperimentRevision, sig));
 }

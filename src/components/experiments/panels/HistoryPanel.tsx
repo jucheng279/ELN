@@ -231,7 +231,7 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
                 {a.file_size != null && (
                   <span className="shrink-0 text-xs text-muted-foreground">({((a.file_size as number) / 1024).toFixed(1)} KB)</span>
                 )}
-                {a.checksum && (
+                {typeof a.checksum === 'string' && (
                   <span className="shrink-0 text-[10px] font-mono text-muted-foreground" title={`SHA-256: ${a.checksum}`}>
                     #{String(a.checksum).slice(0, 6)}
                   </span>
@@ -248,7 +248,8 @@ function SnapshotViewer({ snapshot }: { snapshot: any }) {
 // ─── Main component ─────────────────────────────────────────────────
 
 export default function HistoryPanel() {
-  const { currentExperiment, createRevision, fetchExperiment } = useExperimentStore();
+  const { currentExperiment, createRevision, restoreRevision } = useExperimentStore();
+  const experimentId = currentExperiment?.id;
   const caps = useExperimentCapabilities(currentExperiment);
 
   const [revisions, setRevisions] = useState<ExperimentRevision[]>([]);
@@ -263,7 +264,7 @@ export default function HistoryPanel() {
 
   const fetchRevisions = useCallback(
     async (offset = 0) => {
-      if (!currentExperiment) return;
+      if (!experimentId) return;
       setLoadingRevisions(true);
       try {
         const { data, error } = await supabase
@@ -271,7 +272,7 @@ export default function HistoryPanel() {
           .select(
             '*, profile:profiles!experiment_revisions_created_by_fkey(id, display_name)',
           )
-          .eq('experiment_id', currentExperiment.id)
+          .eq('experiment_id', experimentId)
           .order('created_at', { ascending: false })
           .range(offset, offset + PAGE_SIZE - 1);
 
@@ -290,11 +291,11 @@ export default function HistoryPanel() {
         setLoadingRevisions(false);
       }
     },
-    [currentExperiment?.id],
+    [experimentId],
   );
 
   const fetchAuditEvents = useCallback(async () => {
-    if (!currentExperiment) return;
+    if (!experimentId) return;
     setLoadingAudit(true);
     try {
       const { data, error } = await supabase
@@ -303,7 +304,7 @@ export default function HistoryPanel() {
           '*, actor:profiles!audit_events_actor_id_fkey(id, display_name)',
         )
         .eq('object_type', 'experiment')
-        .eq('object_id', currentExperiment.id)
+        .eq('object_id', experimentId)
         .order('created_at', { ascending: false })
         .limit(20);
 
@@ -314,7 +315,7 @@ export default function HistoryPanel() {
     } finally {
       setLoadingAudit(false);
     }
-  }, [currentExperiment?.id]);
+  }, [experimentId]);
 
   useEffect(() => {
     fetchRevisions();
@@ -342,18 +343,12 @@ export default function HistoryPanel() {
     if (!currentExperiment || !viewingRevision) return;
     setRestoring(true);
     try {
-      const { error } = await supabase.rpc('restore_experiment_revision', {
-        p_experiment_id: currentExperiment.id,
-        p_revision_id: viewingRevision.id,
-      });
-      if (error) throw error;
-
-      await fetchExperiment(currentExperiment.id);
+      await restoreRevision(currentExperiment.id, viewingRevision.id);
       await fetchRevisions();
       setViewingRevision(null);
       toast.success('Revision restored');
-    } catch {
-      toast.error('Failed to restore revision');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to restore revision');
     } finally {
       setRestoring(false);
     }

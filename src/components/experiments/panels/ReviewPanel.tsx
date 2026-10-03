@@ -57,9 +57,11 @@ export default function ReviewPanel() {
     submitForReview,
     approveExperiment,
     requestChanges,
+    resubmitForReview,
     signAndLock,
     createAmendment,
   } = useExperimentStore();
+  const experimentId = currentExperiment?.id;
   const { members, fetchMembers } = useWorkspaceStore();
   const { user } = useAuthStore();
   const caps = useExperimentCapabilities(currentExperiment);
@@ -85,20 +87,20 @@ export default function ReviewPanel() {
   }, [fetchMembers]);
 
   const fetchReviewData = useCallback(async () => {
-    if (!currentExperiment) return;
+    if (!experimentId) return;
     setLoading(true);
     try {
       const { data: reviewData } = await supabase
         .from('reviews')
         .select('*, reviewer:profiles!reviews_reviewer_id_fkey(id, display_name, email)')
-        .eq('experiment_id', currentExperiment.id)
+        .eq('experiment_id', experimentId)
         .order('created_at', { ascending: false });
       setReviews((reviewData ?? []) as Review[]);
 
       const { data: sigData } = await supabase
         .from('signatures')
         .select('*, signer:profiles!signatures_signer_id_fkey(id, display_name)')
-        .eq('experiment_id', currentExperiment.id)
+        .eq('experiment_id', experimentId)
         .order('signed_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -108,7 +110,7 @@ export default function ReviewPanel() {
     } finally {
       setLoading(false);
     }
-  }, [currentExperiment?.id]);
+  }, [experimentId]);
 
   useEffect(() => {
     fetchReviewData();
@@ -165,16 +167,7 @@ export default function ReviewPanel() {
   const handleResubmit = () => {
     if (!latestReview) return;
     runAction(
-      async () => {
-        const store = useExperimentStore.getState();
-        await store.saveBlocks();
-        const { error } = await supabase.rpc('resubmit_for_review', {
-          p_experiment_id: exp.id,
-          p_review_id: latestReview.id,
-        });
-        if (error) throw error;
-        await store.fetchExperiment(exp.id);
-      },
+      () => resubmitForReview(exp.id, latestReview.id),
       'Resubmitted for review'
     );
   };

@@ -15,128 +15,311 @@ import type {
 // ──────────────────────────────────────────────
 
 const pendingBlockChanges = new Map<string, ExperimentBlock>();
+const inFlightBlockIds = new Set<string>();
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let activeExperimentId: string | null = null;
-const AUTOSAVE_DELAY_MS = 2000;
+export const AUTOSAVE_DELAY_MS = 2000;
 
+// Settled (never rejected) promise for whichever block write currently owns the queue.
 let activeSavePromise: Promise<void> | null = null;
+let metadataQueue: Promise<unknown> = Promise.resolve();
+
+export const METADATA_CONFLICT_MESSAGE =
+  'This experiment was updated by someone else. The latest version has been loaded, please try again.';
+export const BLOCK_CONFLICT_MESSAGE =
+  'This block was changed elsewhere. Resolve the conflict before continuing.';
+export const TRANSITION_CONFLICT_MESSAGE =
+  'Some of your edits conflict with changes made elsewhere. Resolve the conflict before continuing.';
+export const TRANSITION_UNSAVED_MESSAGE =
+  'Your latest edits could not be saved yet, so nothing was changed. Retry saving, then try again.';
+
+const EXPERIMENT_DETAIL_SELECT =
+  '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, email, avatar_url)';
+const EXPERIMENT_LIST_SELECT =
+  '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)';
+
+function clearAutosaveTimer() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+}
 
 function scheduleSave() {
-  if (autosaveTimer) clearTimeout(autosaveTimer);
+  clearAutosaveTimer();
   autosaveTimer = setTimeout(() => {
-    void flushPendingBlocks();
+    autosaveTimer = null;
+    void flushPendingBlocks().catch(() => undefined);
   }, AUTOSAVE_DELAY_MS);
 }
 
-async function flushPendingBlocks(options?: { throwOnError?: boolean }): Promise<void> {
-  if (pendingBlockChanges.size === 0) {
-    if (activeSavePromise) await activeSavePromise;
-    return;
-  }
+async function waitForActiveSave(): Promise<void> {
+  while (activeSavePromise) await activeSavePromise;
+}
 
-  if (activeSavePromise) {
-    await activeSavePromise;
-    if (pendingBlockChanges.size === 0) return;
-  }
-
-  const blocksToSave = Array.from(pendingBlockChanges.values());
-  pendingBlockChanges.clear();
-
-  const state = useExperimentStore.getState();
-  state._setSaveState('saving');
-
-  let resolve: () => void;
-  let reject: (e: unknown) => void;
-  activeSavePromise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-
+async function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  await waitForActiveSave();
+  let settle!: () => void;
+  const own = new Promise<void>((res) => { settle = res; });
+  activeSavePromise = own;
   try {
-    const expId = activeExperimentId;
-    if (!expId) throw new Error('No active experiment session');
-
-    const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
-      p_experiment_id: expId,
-      p_blocks: blocksToSave.map((b) => ({
-        id: b.id,
-        type: b.type,
-        content: b.content,
-        order_key: b.order_key,
-        row_version: b.row_version,
-      })),
-    });
-
-    if (error) throw error;
-
-    const serverVersions = new Map<string, number>();
-    const result = data as { updated: Array<{ id: string; row_version: number }> };
-    if (result?.updated) {
-      for (const sv of result.updated) {
-        serverVersions.set(sv.id, sv.row_version);
-      }
-    }
-
-    const currentBlocks = useExperimentStore.getState().blocks;
-    useExperimentStore.setState({
-      blocks: currentBlocks.map((b) => {
-        const newVersion = serverVersions.get(b.id);
-        if (newVersion != null) {
-          const pending = pendingBlockChanges.get(b.id);
-          if (pending) {
-            pendingBlockChanges.set(b.id, { ...pending, row_version: newVersion });
-          }
-          return { ...b, row_version: newVersion };
-        }
-        return b;
-      }),
-    });
-
-    activeSavePromise = null;
-
-    if (pendingBlockChanges.size > 0) {
-      state._setSaveState('dirty');
-      scheduleSave();
-    } else {
-      state._setSaveState('saved');
-    }
-    state._setLastSaved(new Date());
-    resolve!();
-  } catch (error) {
-    activeSavePromise = null;
-    const isConflict = isConflictError(error);
-    state._setSaveState(isConflict ? 'conflict' : 'error');
-    console.error('Autosave failed:', error);
-    for (const b of blocksToSave) {
-      if (!pendingBlockChanges.has(b.id)) {
-        pendingBlockChanges.set(b.id, b);
-      }
-    }
-    if (options?.throwOnError) {
-      reject!(error);
-      throw error;
-    }
-    resolve!();
-    if (!isConflict) {
-      scheduleSave();
-    }
+    return await fn();
+  } finally {
+    if (activeSavePromise === own) activeSavePromise = null;
+    settle();
   }
 }
 
+function hasLocalChange(blockId: string): boolean {
+  return pendingBlockChanges.has(blockId) || inFlightBlockIds.has(blockId);
+}
+
+function sortBlocks(blocks: ExperimentBlock[]): ExperimentBlock[] {
+  return [...blocks].sort((a, b) => a.order_key.localeCompare(b.order_key));
+}
+
+function mergeServerBlocks(local: ExperimentBlock[], server: ExperimentBlock[]): ExperimentBlock[] {
+  const localById = new Map(local.map((b) => [b.id, b]));
+  const serverIds = new Set(server.map((b) => b.id));
+  const merged = server.map((s) =>
+    hasLocalChange(s.id) ? localById.get(s.id) ?? pendingBlockChanges.get(s.id) ?? s : s
+  );
+  for (const b of local) {
+    if (!serverIds.has(b.id) && hasLocalChange(b.id)) merged.push(b);
+  }
+  return sortBlocks(merged);
+}
+
+function applyServerVersions(data: unknown) {
+  const updated = (data as { updated?: Array<{ id: string; row_version: number }> } | null)?.updated;
+  if (!Array.isArray(updated) || updated.length === 0) return;
+  const versions = new Map(updated.map((sv) => [sv.id, sv.row_version]));
+  for (const [id, version] of versions) {
+    const pending = pendingBlockChanges.get(id);
+    if (pending) pendingBlockChanges.set(id, { ...pending, row_version: version });
+  }
+  useExperimentStore.setState((state) => ({
+    blocks: state.blocks.map((b) => {
+      const version = versions.get(b.id);
+      return version != null ? { ...b, row_version: version } : b;
+    }),
+  }));
+}
+
+function setBlockOrderKey(blockId: string, orderKey: string) {
+  const pending = pendingBlockChanges.get(blockId);
+  if (pending) pendingBlockChanges.set(blockId, { ...pending, order_key: orderKey });
+  useExperimentStore.setState((state) => ({
+    blocks: sortBlocks(state.blocks.map((b) => (b.id === blockId ? { ...b, order_key: orderKey } : b))),
+  }));
+}
+
+async function flushPendingBlocks(options?: { throwOnError?: boolean }): Promise<void> {
+  await waitForActiveSave();
+  if (pendingBlockChanges.size === 0) return;
+
+  await runExclusive(async () => {
+    if (pendingBlockChanges.size === 0) return;
+    const blocksToSave = Array.from(pendingBlockChanges.values());
+    pendingBlockChanges.clear();
+    for (const b of blocksToSave) inFlightBlockIds.add(b.id);
+
+    const state = useExperimentStore.getState();
+    state._setSaveState('saving');
+
+    try {
+      const expId = activeExperimentId;
+      if (!expId) throw new Error('No active experiment session');
+
+      const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
+        p_experiment_id: expId,
+        p_blocks: blocksToSave.map((b) => ({
+          id: b.id,
+          type: b.type,
+          content: b.content,
+          order_key: b.order_key,
+          row_version: b.row_version,
+        })),
+      });
+      if (error) throw error;
+
+      for (const b of blocksToSave) inFlightBlockIds.delete(b.id);
+      applyServerVersions(data);
+
+      if (pendingBlockChanges.size > 0) {
+        state._setSaveState('dirty');
+        scheduleSave();
+      } else {
+        state._setSaveState('saved');
+      }
+      state._setLastSaved(new Date());
+    } catch (error) {
+      for (const b of blocksToSave) {
+        inFlightBlockIds.delete(b.id);
+        if (!pendingBlockChanges.has(b.id)) pendingBlockChanges.set(b.id, b);
+      }
+      const isConflict = isConflictError(error);
+      state._setSaveState(isConflict ? 'conflict' : 'error');
+      console.error('Autosave failed:', error);
+      if (!isConflict) scheduleSave();
+      if (options?.throwOnError) throw error;
+    }
+  });
+}
+
 // The database signals optimistic-concurrency conflicts as PT409 (formerly 40001).
-function isConflictError(error: unknown): boolean {
+export function isConflictError(error: unknown): boolean {
   if (!(error instanceof Object) || !('code' in error)) return false;
   const code = (error as { code: unknown }).code;
   return code === 'PT409' || code === '40001';
 }
 
+function conflictError(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: 'PT409' });
+}
+
 async function drainPendingSaves(): Promise<void> {
+  clearAutosaveTimer();
   const MAX_DRAIN = 5;
   for (let i = 0; i < MAX_DRAIN; i++) {
-    if (activeSavePromise) await activeSavePromise;
+    await waitForActiveSave();
     if (pendingBlockChanges.size === 0) return;
+    if (useExperimentStore.getState().saveState === 'conflict') {
+      throw conflictError(TRANSITION_CONFLICT_MESSAGE);
+    }
     await flushPendingBlocks({ throwOnError: true });
   }
   if (pendingBlockChanges.size > 0) {
     throw new Error('Could not drain pending saves after multiple attempts');
   }
+}
+
+async function prepareTransition(): Promise<void> {
+  try {
+    await drainPendingSaves();
+  } catch (error) {
+    throw new Error(isConflictError(error) ? TRANSITION_CONFLICT_MESSAGE : TRANSITION_UNSAVED_MESSAGE);
+  }
+}
+
+async function runTransition(
+  id: string,
+  rpcName: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  await prepareTransition();
+  const { data, error } = await supabase.rpc(rpcName, args);
+  if (error) throw error;
+  await useExperimentStore.getState().refreshExperiment(id);
+  return data;
+}
+
+async function loadExperimentRecord(id: string): Promise<Experiment> {
+  const { data, error } = await supabase
+    .from('experiments')
+    .select(EXPERIMENT_DETAIL_SELECT)
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  if (!data) throw new Error('Experiment not found');
+
+  const experiment = data as Experiment;
+
+  const { data: tagRows, error: tagError } = await supabase
+    .from('experiment_tags')
+    .select('tag:tags(*)')
+    .eq('experiment_id', id);
+  if (tagError) throw tagError;
+  experiment.tags = (tagRows ?? []).map((r) => r.tag as unknown as Tag);
+
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (userId) {
+    const { data: fav } = await supabase
+      .from('favorites')
+      .select('id')
+      .eq('experiment_id', id)
+      .eq('user_id', userId)
+      .maybeSingle();
+    experiment.is_favorited = !!fav;
+  }
+  return experiment;
+}
+
+async function loadBlocks(experimentId: string): Promise<ExperimentBlock[]> {
+  const { data, error } = await supabase
+    .from('experiment_blocks')
+    .select('*')
+    .eq('experiment_id', experimentId)
+    .order('order_key', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ExperimentBlock[];
+}
+
+interface MetadataResult {
+  metadata_version: number;
+  title: string;
+  experiment_date: string | null;
+  notebook_id: string;
+  folder_id: string | null;
+  updated_at: string;
+}
+
+type MetadataUpdates = Partial<Pick<Experiment, 'title' | 'notebook_id' | 'folder_id' | 'experiment_date'>>;
+
+async function applyMetadataUpdate(id: string, updates: MetadataUpdates): Promise<void> {
+  const store = useExperimentStore.getState();
+  const current = store.currentExperiment;
+  let expectedVersion = current?.id === id ? current.metadata_version : undefined;
+  if (expectedVersion == null) {
+    const { data: row, error: versionError } = await supabase
+      .from('experiments')
+      .select('metadata_version')
+      .eq('id', id)
+      .maybeSingle();
+    if (versionError) throw versionError;
+    if (!row) throw new Error('Experiment not found');
+    expectedVersion = row.metadata_version as number;
+  }
+
+  const { data, error } = await supabase.rpc('update_experiment_metadata', {
+    p_experiment_id: id,
+    p_expected_version: expectedVersion,
+    p_title: updates.title ?? null,
+    p_experiment_date: updates.experiment_date ?? null,
+    p_notebook_id: updates.notebook_id ?? null,
+    p_folder_id: updates.folder_id ?? null,
+    p_clear_folder: 'folder_id' in updates && updates.folder_id === null,
+  });
+  if (error) {
+    if (isConflictError(error)) {
+      await store.refreshExperiment(id, { blocks: false });
+      throw new Error(METADATA_CONFLICT_MESSAGE);
+    }
+    throw error;
+  }
+
+  const result = data as MetadataResult | null;
+  if (!result || typeof result.metadata_version !== 'number') {
+    await store.refreshExperiment(id, { blocks: false });
+    return;
+  }
+
+  const patch = {
+    metadata_version: result.metadata_version,
+    title: result.title,
+    experiment_date: result.experiment_date,
+    notebook_id: result.notebook_id,
+    folder_id: result.folder_id,
+    updated_at: result.updated_at,
+  } as Partial<Experiment>;
+  const notebookChanged = current?.id === id && current.notebook_id !== result.notebook_id;
+
+  useExperimentStore.setState((state) => ({
+    currentExperiment:
+      state.currentExperiment?.id === id ? { ...state.currentExperiment, ...patch } : state.currentExperiment,
+    experiments: state.experiments.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+  }));
+
+  if (notebookChanged) await store.refreshExperiment(id, { blocks: false });
 }
 
 function handleBeforeUnload(e: BeforeUnloadEvent) {
@@ -147,50 +330,26 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
 
 async function startAutosaveSession(experimentId: string) {
   if (activeExperimentId === experimentId) return;
-  await stopAutosaveSession();
+  if (activeExperimentId) await stopAutosaveSession();
   activeExperimentId = experimentId;
   window.addEventListener('beforeunload', handleBeforeUnload);
 }
 
 async function stopAutosaveSession(): Promise<void> {
-  if (autosaveTimer) clearTimeout(autosaveTimer);
-  autosaveTimer = null;
-
-  if (activeSavePromise) {
-    await activeSavePromise;
-  }
-
+  clearAutosaveTimer();
+  await waitForActiveSave();
   if (pendingBlockChanges.size > 0) {
     await flushPendingBlocks({ throwOnError: true });
   }
-
   activeExperimentId = null;
   window.removeEventListener('beforeunload', handleBeforeUnload);
-}
-
-async function discardPendingAndReload(): Promise<void> {
-  if (autosaveTimer) clearTimeout(autosaveTimer);
-  autosaveTimer = null;
-
-  if (activeSavePromise) {
-    try { await activeSavePromise; } catch { /* already-running write settled */ }
-  }
-
-  pendingBlockChanges.clear();
-
-  const expId = activeExperimentId;
-  if (!expId) return;
-
-  const state = useExperimentStore.getState();
-  state._setSaveState('clean');
-  await state.fetchExperiment(expId);
 }
 
 // ──────────────────────────────────────────────
 // Store types
 // ──────────────────────────────────────────────
 
-type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
+export type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
 
 interface ExperimentState {
   experiments: Experiment[];
@@ -217,10 +376,8 @@ interface ExperimentActions {
     templateVersionId?: string
   ) => Promise<Experiment>;
   fetchExperiment: (id: string) => Promise<void>;
-  updateExperiment: (
-    id: string,
-    updates: Partial<Pick<Experiment, 'title' | 'notebook_id' | 'folder_id' | 'experiment_date'>>
-  ) => Promise<void>;
+  refreshExperiment: (id: string, opts?: { blocks?: boolean }) => Promise<void>;
+  updateExperiment: (id: string, updates: MetadataUpdates) => Promise<void>;
   duplicateExperiment: (
     id: string,
     options?: { includeBlocks?: boolean; includeProtocols?: boolean }
@@ -232,10 +389,12 @@ interface ExperimentActions {
   completeExperiment: (id: string) => Promise<void>;
   reopenExperiment: (id: string) => Promise<void>;
   submitForReview: (id: string, reviewerId: string) => Promise<void>;
+  resubmitForReview: (id: string, reviewId: string) => Promise<void>;
   approveExperiment: (id: string, reviewId: string) => Promise<void>;
   requestChanges: (id: string, reviewId: string, comment?: string) => Promise<void>;
   signAndLock: (id: string) => Promise<void>;
   createAmendment: (id: string, reason: string) => Promise<{ id: string } | null>;
+  restoreRevision: (experimentId: string, revisionId: string) => Promise<void>;
 
   fetchBlocks: (experimentId: string) => Promise<void>;
   addBlock: (
@@ -248,6 +407,7 @@ interface ExperimentActions {
   deleteBlock: (blockId: string) => Promise<void>;
   reorderBlocks: (experimentId: string, blockId: string, newOrderKey: string) => Promise<void>;
   saveBlocks: () => Promise<void>;
+  drainPendingSaves: () => Promise<void>;
 
   toggleFavorite: (experimentId: string) => Promise<void>;
   addTag: (experimentId: string, tagName: string) => Promise<void>;
@@ -262,9 +422,9 @@ interface ExperimentActions {
   clearFilters: () => void;
 
   retryPendingSave: () => Promise<void>;
-  reloadFromServer: () => Promise<void>;
   discardAndReload: () => Promise<void>;
   hasPendingChanges: () => boolean;
+  getUnsavedBlocks: () => ExperimentBlock[];
   initSession: (experimentId: string) => void;
   teardownSession: () => Promise<void>;
 }
@@ -304,36 +464,35 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     }
   },
 
-  reloadFromServer: async () => {
-    const expId = activeExperimentId;
-    if (!expId) return;
-    pendingBlockChanges.clear();
-    if (autosaveTimer) clearTimeout(autosaveTimer);
-    autosaveTimer = null;
-    if (activeSavePromise) {
-      try { await activeSavePromise; } catch { /* settle in-flight write */ }
-    }
-    activeSavePromise = null;
-    const state = useExperimentStore.getState();
-    state._setSaveState('clean');
-    await state.fetchExperiment(expId);
-  },
-
+  // The only path (besides "Discard and leave") that drops unsaved local edits; callers must confirm first.
   discardAndReload: async () => {
-    await discardPendingAndReload();
+    const expId = activeExperimentId ?? get().currentExperiment?.id;
+    clearAutosaveTimer();
+    await waitForActiveSave();
+    pendingBlockChanges.clear();
+    get()._setSaveState('clean');
+    if (expId) await get().refreshExperiment(expId);
   },
 
-  hasPendingChanges: () => {
-    return pendingBlockChanges.size > 0 || activeSavePromise !== null;
+  hasPendingChanges: () => pendingBlockChanges.size > 0 || activeSavePromise !== null,
+
+  getUnsavedBlocks: () => {
+    const { blocks } = get();
+    const visible = blocks.filter((b) => hasLocalChange(b.id));
+    const visibleIds = new Set(visible.map((b) => b.id));
+    const orphaned = Array.from(pendingBlockChanges.values()).filter((b) => !visibleIds.has(b.id));
+    return [...visible, ...orphaned];
   },
 
   initSession: (experimentId) => { void startAutosaveSession(experimentId); },
   teardownSession: async () => {
+    const sessionId = activeExperimentId;
     try {
       await stopAutosaveSession();
     } catch {
       if (pendingBlockChanges.size > 0) return;
     }
+    if (sessionId && get().currentExperiment?.id !== sessionId) return;
     set({ currentExperiment: null, blocks: [], saveState: 'clean' });
   },
 
@@ -346,9 +505,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
 
       let query = supabase
         .from('experiments')
-        .select(
-          '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
-        )
+        .select(EXPERIMENT_LIST_SELECT)
         .eq('workspace_id', workspaceId)
         .eq('is_archived', false);
 
@@ -414,9 +571,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     const result = data as { id: string; experiment_number: number; experiment_id: string };
     const { data: experiment, error: fetchError } = await supabase
       .from('experiments')
-      .select(
-        '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
-      )
+      .select(EXPERIMENT_LIST_SELECT)
       .eq('id', result.id)
       .single();
     if (fetchError) throw fetchError;
@@ -426,139 +581,91 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     return exp;
   },
 
+  // Initial page load only; post-mutation updates use refreshExperiment so the editor stays mounted.
   fetchExperiment: async (id) => {
     set({ loading: true });
     try {
-      const { data, error } = await supabase
-        .from('experiments')
-        .select(
-          '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, email, avatar_url)'
-        )
-        .eq('id', id)
-        .single();
-      if (error) throw error;
-
-      const experiment = data as Experiment;
-
-      const { data: tagRows } = await supabase
-        .from('experiment_tags')
-        .select('tag:tags(*)')
-        .eq('experiment_id', id);
-      experiment.tags = (tagRows ?? []).map((r) => r.tag as unknown as Tag);
-
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData.user?.id;
-      if (userId) {
-        const { data: fav } = await supabase
-          .from('favorites')
-          .select('id')
-          .eq('experiment_id', id)
-          .eq('user_id', userId)
-          .maybeSingle();
-        experiment.is_favorited = !!fav;
-      }
-
-      set({ currentExperiment: experiment });
-      await get().fetchBlocks(id);
+      const experiment = await loadExperimentRecord(id);
+      const serverBlocks = await loadBlocks(id);
+      set((state) => ({
+        currentExperiment: experiment,
+        blocks: activeExperimentId === id ? mergeServerBlocks(state.blocks, serverBlocks) : serverBlocks,
+      }));
     } catch (error) {
       console.error('Failed to fetch experiment:', error);
+      if (get().currentExperiment?.id !== id) set({ currentExperiment: null, blocks: [] });
     } finally {
       set({ loading: false });
     }
   },
 
-  updateExperiment: async (id, updates) => {
-    const current = get().currentExperiment;
-    let expectedVersion = current?.id === id ? current.metadata_version : undefined;
-    if (expectedVersion == null) {
-      const { data: row, error: versionError } = await supabase
-        .from('experiments')
-        .select('metadata_version')
-        .eq('id', id)
-        .maybeSingle();
-      if (versionError) throw versionError;
-      if (!row) throw new Error('Experiment not found');
-      expectedVersion = row.metadata_version as number;
-    }
+  refreshExperiment: async (id, opts) => {
+    try {
+      const experiment = await loadExperimentRecord(id);
+      const current = get().currentExperiment;
+      if (current && current.id !== id) return;
+      set({ currentExperiment: experiment });
+      if (opts?.blocks === false) return;
 
-    const { error } = await supabase.rpc('update_experiment_metadata', {
-      p_experiment_id: id,
-      p_expected_version: expectedVersion,
-      p_title: updates.title ?? null,
-      p_experiment_date: updates.experiment_date ?? null,
-      p_notebook_id: updates.notebook_id ?? null,
-      p_folder_id: updates.folder_id ?? null,
-    });
-    if (error) {
-      if (isConflictError(error)) {
-        await get().fetchExperiment(id);
-        throw new Error('This experiment was updated by someone else. The latest version has been loaded, please try again.');
-      }
-      throw error;
+      const serverBlocks = await loadBlocks(id);
+      if (get().currentExperiment?.id !== id) return;
+      set((state) => ({ blocks: mergeServerBlocks(state.blocks, serverBlocks) }));
+    } catch (error) {
+      console.error('Failed to refresh experiment:', error);
     }
+  },
 
-    await get().fetchExperiment(id);
+  updateExperiment: (id, updates) => {
+    const run = metadataQueue.then(() => applyMetadataUpdate(id, updates));
+    metadataQueue = run.catch(() => undefined);
+    return run;
   },
 
   // ── Domain status RPCs ─────────────────────
 
   startExperiment: async (id) => {
-    const { error } = await supabase.rpc('start_experiment', { p_experiment_id: id });
-    if (error) throw error;
-    await get().fetchExperiment(id);
+    await runTransition(id, 'start_experiment', { p_experiment_id: id });
   },
 
   completeExperiment: async (id) => {
-    await drainPendingSaves();
-    const { error } = await supabase.rpc('complete_experiment', { p_experiment_id: id });
-    if (error) throw error;
-    await get().fetchExperiment(id);
+    await runTransition(id, 'complete_experiment', { p_experiment_id: id });
   },
 
   reopenExperiment: async (id) => {
-    const { error } = await supabase.rpc('reopen_experiment', { p_experiment_id: id });
-    if (error) throw error;
-    await get().fetchExperiment(id);
+    await runTransition(id, 'reopen_experiment', { p_experiment_id: id });
   },
 
   submitForReview: async (id, reviewerId) => {
-    await drainPendingSaves();
-    const { data, error } = await supabase.rpc('submit_for_review', {
+    await runTransition(id, 'submit_for_review', {
       p_experiment_id: id,
       p_reviewer_id: reviewerId,
     });
-    if (error) throw error;
-    await get().fetchExperiment(id);
-    return data;
   },
 
-  approveExperiment: async (id, reviewId) => {
-    const { error } = await supabase.rpc('approve_experiment', {
+  resubmitForReview: async (id, reviewId) => {
+    await runTransition(id, 'resubmit_for_review', {
       p_experiment_id: id,
       p_review_id: reviewId,
     });
-    if (error) throw error;
-    await get().fetchExperiment(id);
+  },
+
+  approveExperiment: async (id, reviewId) => {
+    await runTransition(id, 'approve_experiment', {
+      p_experiment_id: id,
+      p_review_id: reviewId,
+    });
   },
 
   requestChanges: async (id, reviewId, comment) => {
-    const { error } = await supabase.rpc('request_experiment_changes', {
+    await runTransition(id, 'request_experiment_changes', {
       p_experiment_id: id,
       p_review_id: reviewId,
       p_comment: comment ?? null,
     });
-    if (error) throw error;
-    await get().fetchExperiment(id);
   },
 
   signAndLock: async (id) => {
-    await drainPendingSaves();
-    const { data, error } = await supabase.rpc('sign_and_lock_experiment', {
-      p_experiment_id: id,
-    });
-    if (error) throw error;
-    await get().fetchExperiment(id);
-    return data;
+    await runTransition(id, 'sign_and_lock_experiment', { p_experiment_id: id });
   },
 
   createAmendment: async (id, reason) => {
@@ -570,21 +677,26 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     return data as { id: string } | null;
   },
 
+  restoreRevision: async (experimentId, revisionId) => {
+    await prepareTransition();
+    if (get().hasPendingChanges()) throw new Error(TRANSITION_UNSAVED_MESSAGE);
+    const { error } = await supabase.rpc('restore_experiment_revision', {
+      p_experiment_id: experimentId,
+      p_revision_id: revisionId,
+    });
+    if (error) throw error;
+    await get().refreshExperiment(experimentId);
+  },
+
   // ── Blocks ────────────────────────────────────
 
   fetchBlocks: async (experimentId) => {
-    const { data, error } = await supabase
-      .from('experiment_blocks')
-      .select('*')
-      .eq('experiment_id', experimentId)
-      .order('order_key', { ascending: true });
-    if (error) throw error;
-    set({ blocks: (data ?? []) as ExperimentBlock[] });
+    const serverBlocks = await loadBlocks(experimentId);
+    set((state) => ({ blocks: mergeServerBlocks(state.blocks, serverBlocks) }));
   },
 
   addBlock: async (experimentId, type, content, afterBlockId) => {
-    const { blocks } = get();
-    const sorted = [...blocks].sort((a, b) => a.order_key.localeCompare(b.order_key));
+    const sorted = sortBlocks(get().blocks);
     let newOrderKey: string;
 
     if (afterBlockId) {
@@ -609,92 +721,95 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     if (error) throw error;
 
     const newBlock = data as unknown as ExperimentBlock;
-    set((state) => {
-      const updated = [...state.blocks, newBlock].sort((a, b) =>
-        a.order_key.localeCompare(b.order_key)
-      );
-      return { blocks: updated };
-    });
-
+    set((state) => ({ blocks: sortBlocks([...state.blocks, newBlock]) }));
     return newBlock;
   },
 
   updateBlock: (blockId, content) => {
-    set((state) => {
-      const updatedBlocks = state.blocks.map((b) => {
-        if (b.id === blockId) {
-          const updated = { ...b, content, updated_at: new Date().toISOString() };
-          pendingBlockChanges.set(blockId, updated);
-          return updated;
-        }
-        return b;
-      });
-      return { blocks: updatedBlocks };
-    });
+    set((state) => ({
+      blocks: state.blocks.map((b) => {
+        if (b.id !== blockId) return b;
+        const updated = { ...b, content, updated_at: new Date().toISOString() };
+        pendingBlockChanges.set(blockId, updated);
+        return updated;
+      }),
+    }));
+    // A conflict needs an explicit user decision; never auto-retry the stale write.
+    if (get().saveState === 'conflict') return;
     get()._setSaveState('dirty');
     scheduleSave();
   },
 
   deleteBlock: async (blockId) => {
-    pendingBlockChanges.delete(blockId);
-    const block = get().blocks.find((b) => b.id === blockId);
-    if (!block) return;
-    const { error } = await supabase.rpc('delete_experiment_block', {
-      p_experiment_id: block.experiment_id,
-      p_block_id: blockId,
-      p_expected_version: block.row_version,
+    await runExclusive(async () => {
+      const block = get().blocks.find((b) => b.id === blockId);
+      if (!block) {
+        pendingBlockChanges.delete(blockId);
+        return;
+      }
+      const expectedVersion = pendingBlockChanges.get(blockId)?.row_version ?? block.row_version;
+      const { error } = await supabase.rpc('delete_experiment_block', {
+        p_experiment_id: block.experiment_id,
+        p_block_id: blockId,
+        p_expected_version: expectedVersion,
+      });
+      if (error) {
+        if (isConflictError(error)) {
+          get()._setSaveState('conflict');
+          throw conflictError(BLOCK_CONFLICT_MESSAGE);
+        }
+        throw error;
+      }
+      pendingBlockChanges.delete(blockId);
+      set((state) => ({ blocks: state.blocks.filter((b) => b.id !== blockId) }));
+      const { saveState } = get();
+      if (pendingBlockChanges.size === 0 && (saveState === 'dirty' || saveState === 'error')) {
+        clearAutosaveTimer();
+        get()._setSaveState('saved');
+      }
     });
-    if (error) throw error;
-    set((state) => ({ blocks: state.blocks.filter((b) => b.id !== blockId) }));
   },
 
   reorderBlocks: async (experimentId, blockId, newOrderKey) => {
-    set((state) => {
-      const updatedBlocks = state.blocks
-        .map((b) => (b.id === blockId ? { ...b, order_key: newOrderKey } : b))
-        .sort((a, b) => a.order_key.localeCompare(b.order_key));
-      return { blocks: updatedBlocks };
-    });
+    const original = get().blocks.find((b) => b.id === blockId);
+    if (!original || original.order_key === newOrderKey) return;
+    const previousOrderKey = original.order_key;
+    setBlockOrderKey(blockId, newOrderKey);
 
-    const block = get().blocks.find((b) => b.id === blockId);
-    if (!block) return;
+    await runExclusive(async () => {
+      const latest = pendingBlockChanges.get(blockId) ?? get().blocks.find((b) => b.id === blockId);
+      if (!latest) return;
 
-    const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
-      p_experiment_id: experimentId,
-      p_blocks: [{
-        id: blockId,
-        type: block.type,
-        content: block.content,
-        order_key: newOrderKey,
-        row_version: block.row_version,
-      }],
-    });
+      const { data, error } = await supabase.rpc('upsert_experiment_blocks', {
+        p_experiment_id: experimentId,
+        p_blocks: [{
+          id: blockId,
+          type: latest.type,
+          content: latest.content,
+          order_key: newOrderKey,
+          row_version: latest.row_version,
+        }],
+      });
 
-    if (error) {
-      console.error('Failed to reorder block:', error);
-      await get().fetchBlocks(experimentId);
-      return;
-    }
-
-    const result = data as { updated: Array<{ id: string; row_version: number }> } | null;
-    if (result?.updated) {
-      const serverVersions = new Map<string, number>();
-      for (const sv of result.updated) {
-        serverVersions.set(sv.id, sv.row_version);
+      if (error) {
+        if (get().blocks.find((b) => b.id === blockId)?.order_key === newOrderKey) {
+          setBlockOrderKey(blockId, previousOrderKey);
+        }
+        if (isConflictError(error)) {
+          get()._setSaveState('conflict');
+          throw conflictError(BLOCK_CONFLICT_MESSAGE);
+        }
+        throw error;
       }
-      set((state) => ({
-        blocks: state.blocks.map((b) => {
-          const newVersion = serverVersions.get(b.id);
-          return newVersion != null ? { ...b, row_version: newVersion } : b;
-        }),
-      }));
-    }
+      applyServerVersions(data);
+    });
   },
 
   saveBlocks: async () => {
-    if (autosaveTimer) clearTimeout(autosaveTimer);
     await drainPendingSaves();
   },
+
+  drainPendingSaves: () => drainPendingSaves(),
 
   duplicateExperiment: async (id, options = {}) => {
     const { includeBlocks = true, includeProtocols = false } = options;
@@ -709,9 +824,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
     const result = data as { id: string };
     const { data: experiment, error: fetchError } = await supabase
       .from('experiments')
-      .select(
-        '*, notebook:notebooks(id, name), created_by_profile:profiles!experiments_created_by_fkey(id, display_name, avatar_url)'
-      )
+      .select(EXPERIMENT_LIST_SELECT)
       .eq('id', result.id)
       .single();
     if (fetchError) throw fetchError;
@@ -722,6 +835,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   archiveExperiment: async (id) => {
+    await prepareTransition();
     const { error } = await supabase.rpc('archive_experiment_rpc', {
       p_experiment_id: id,
     });
@@ -737,11 +851,11 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
       p_experiment_id: id,
     });
     if (error) throw error;
-    await get().fetchExperiment(id);
-    const restored = get().currentExperiment;
-    if (restored) {
-      set((state) => ({ experiments: [restored, ...state.experiments] }));
-    }
+    const restored = await loadExperimentRecord(id);
+    set((state) => ({
+      experiments: [restored, ...state.experiments.filter((e) => e.id !== id)],
+      currentExperiment: state.currentExperiment?.id === id ? restored : state.currentExperiment,
+    }));
   },
 
   // ── Favorites ─────────────────────────────────
@@ -848,7 +962,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   // ── Revisions (server-side RPC) ──────────────
 
   createRevision: async (experimentId, changeSummary) => {
-    await drainPendingSaves();
+    await prepareTransition();
     const { data, error } = await supabase.rpc('create_checkpoint', {
       p_experiment_id: experimentId,
       p_change_summary: changeSummary,
@@ -865,7 +979,7 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
             : state.currentExperiment,
       }));
     }
-    return data;
+    return revisionData;
   },
 
   // ── Filters ───────────────────────────────────

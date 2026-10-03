@@ -63,7 +63,7 @@ SELECT is(
   'Row version incremented after upsert'
 );
 
--- Test 3: Stale version rejected with serialization_failure
+-- Test 3: Stale version rejected with the PT409 optimistic-concurrency code
 SELECT throws_ok(
   $$ SELECT public.upsert_experiment_blocks(
     current_setting('test.experiment_id')::uuid,
@@ -75,9 +75,9 @@ SELECT throws_ok(
       'row_version', 1
     ))
   ) $$,
-  '40001',
+  'PT409',
   NULL,
-  'Stale row_version rejected with serialization_failure'
+  'Stale row_version rejected with PT409'
 );
 
 -- Test 4: Missing row_version rejected

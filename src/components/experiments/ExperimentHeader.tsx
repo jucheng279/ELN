@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useExperimentStore } from '@/stores/experimentStore';
 import { useExperimentCapabilities } from '@/hooks/useExperimentCapabilities';
 import ExperimentStatusBadge from '@/components/eln/ExperimentStatusBadge';
+import SaveConflictDialog from '@/components/experiments/SaveConflictDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -62,6 +63,7 @@ export default function ExperimentHeader({
   const [tagInputValue, setTagInputValue] = useState('');
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -80,7 +82,7 @@ export default function ExperimentHeader({
     const trimmed = titleValue.trim();
     if (trimmed && trimmed !== experiment.title) {
       updateExperiment(experiment.id, { title: trimmed }).catch((err) => {
-        setTitleValue(experiment.title);
+        setTitleValue(useExperimentStore.getState().currentExperiment?.title ?? experiment.title);
         toast.error(err instanceof Error ? err.message : 'Could not update title');
       });
     } else {
@@ -184,10 +186,10 @@ export default function ExperimentHeader({
               <Clock className="h-3 w-3 text-amber-500" />
               <span className="text-amber-600">Changed elsewhere</span>
               <button
-                onClick={() => void useExperimentStore.getState().reloadFromServer()}
+                onClick={() => setConflictDialogOpen(true)}
                 className="ml-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
               >
-                Reload latest
+                Resolve
               </button>
             </span>
           ) : saveState === 'dirty' ? (
@@ -196,6 +198,7 @@ export default function ExperimentHeader({
             <><Check className="h-3 w-3 text-green-600" /><span>Saved</span></>
           ) : null}
         </span>
+        <SaveConflictDialog open={conflictDialogOpen} onOpenChange={setConflictDialogOpen} />
 
         <ExperimentStatusBadge status={experiment.status} />
 

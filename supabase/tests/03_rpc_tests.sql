@@ -256,15 +256,17 @@ SELECT throws_ok(
 -- Test 9: Metadata update validates notebook ownership
 -- ──────────────────────────────────────────────────────
 SELECT throws_ok(
-  $$ SELECT public.update_experiment_metadata(
+  $ SELECT public.update_experiment_metadata(
     current_setting('test.experiment_id')::uuid,
+    (SELECT metadata_version FROM public.experiments WHERE id = current_setting('test.experiment_id')::uuid),
     'Updated Title',
     CURRENT_DATE,
     current_setting('test.other_notebook_id')::uuid,
-    NULL
-  ) $$,
-  NULL,
-  NULL,
+    NULL,
+    false
+  ) $,
+  'P0001',
+  'Notebook does not belong to this workspace',
   'Metadata update rejects cross-workspace notebook'
 );
 

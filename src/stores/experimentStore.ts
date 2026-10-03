@@ -101,7 +101,7 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }): Promise
     resolve!();
   } catch (error) {
     activeSavePromise = null;
-    const isConflict = error instanceof Object && 'code' in error && (error as { code: string }).code === '40001';
+    const isConflict = isConflictError(error);
     state._setSaveState(isConflict ? 'conflict' : 'error');
     console.error('Autosave failed:', error);
     for (const b of blocksToSave) {
@@ -118,6 +118,13 @@ async function flushPendingBlocks(options?: { throwOnError?: boolean }): Promise
       scheduleSave();
     }
   }
+}
+
+// The database signals optimistic-concurrency conflicts as PT409 (formerly 40001).
+function isConflictError(error: unknown): boolean {
+  if (!(error instanceof Object) || !('code' in error)) return false;
+  const code = (error as { code: unknown }).code;
+  return code === 'PT409' || code === '40001';
 }
 
 async function drainPendingSaves(): Promise<void> {
@@ -461,14 +468,34 @@ export const useExperimentStore = create<ExperimentState & ExperimentActions>((s
   },
 
   updateExperiment: async (id, updates) => {
+    const current = get().currentExperiment;
+    let expectedVersion = current?.id === id ? current.metadata_version : undefined;
+    if (expectedVersion == null) {
+      const { data: row, error: versionError } = await supabase
+        .from('experiments')
+        .select('metadata_version')
+        .eq('id', id)
+        .maybeSingle();
+      if (versionError) throw versionError;
+      if (!row) throw new Error('Experiment not found');
+      expectedVersion = row.metadata_version as number;
+    }
+
     const { error } = await supabase.rpc('update_experiment_metadata', {
       p_experiment_id: id,
+      p_expected_version: expectedVersion,
       p_title: updates.title ?? null,
       p_experiment_date: updates.experiment_date ?? null,
       p_notebook_id: updates.notebook_id ?? null,
       p_folder_id: updates.folder_id ?? null,
     });
-    if (error) throw error;
+    if (error) {
+      if (isConflictError(error)) {
+        await get().fetchExperiment(id);
+        throw new Error('This experiment was updated by someone else. The latest version has been loaded, please try again.');
+      }
+      throw error;
+    }
 
     await get().fetchExperiment(id);
   },

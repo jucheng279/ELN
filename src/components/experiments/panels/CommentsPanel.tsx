@@ -1,16 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import {
-  MessageSquare,
-  Reply,
-  CheckCircle2,
-  CircleDot,
-  Send,
-  ChevronDown,
-  ChevronRight,
-  AtSign,
-  Loader2,
-} from 'lucide-react';
+import { MessageSquare, Reply, CircleCheck as CheckCircle2, CircleDot, Send, ChevronDown, ChevronRight, AtSign, Loader as Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useExperimentStore } from '@/stores/experimentStore';
@@ -187,20 +177,17 @@ export default function CommentsPanel() {
   };
 
   const handleToggleResolve = async (thread: CommentThread) => {
-    try {
-      const newResolved = !thread.is_resolved;
-      await supabase
-        .from('comment_threads')
-        .update({
-          is_resolved: newResolved,
-          resolved_by: newResolved ? user?.id : null,
-          resolved_at: newResolved ? new Date().toISOString() : null,
-        })
-        .eq('id', thread.id);
-      await fetchThreads();
-    } catch {
-      toast.error('Failed to update thread');
+    if (!currentExperiment) return;
+    const { error } = await supabase.rpc('set_comment_thread_resolved', {
+      p_experiment_id: currentExperiment.id,
+      p_thread_id: thread.id,
+      p_resolved: !thread.is_resolved,
+    });
+    if (error) {
+      toast.error(error.message || 'Failed to update thread');
+      return;
     }
+    await fetchThreads();
   };
 
   const openThreads = threads.filter((t) => !t.is_resolved);

@@ -97,6 +97,7 @@ export interface Experiment {
   created_by: string;
   experiment_date: string;
   current_revision: number;
+  metadata_version: number;
   is_locked: boolean;
   is_archived: boolean;
   template_id: string | null;

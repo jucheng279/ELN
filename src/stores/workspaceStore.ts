@@ -129,10 +129,10 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>((set,
     const { currentWorkspace } = get();
     if (!currentWorkspace) throw new Error('No workspace selected');
 
-    const { error } = await supabase.from('workspace_invitations').insert({
-      workspace_id: currentWorkspace.id,
-      email,
-      role: role === 'owner' ? 'admin' : role,
+    const { error } = await supabase.rpc('create_workspace_invitation', {
+      p_workspace_id: currentWorkspace.id,
+      p_email: email,
+      p_role: role === 'owner' ? 'admin' : role,
     });
 
     if (error) throw error;

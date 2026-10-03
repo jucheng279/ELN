@@ -24,23 +24,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import type { Experiment } from '@/lib/types';
-import {
-  Star,
-  MoreHorizontal,
-  X,
-  Plus,
-  Calendar,
-  FileDown,
-  Lock,
-  Loader2,
-  Check,
-  Clock,
-  Copy,
-  Archive,
-  Play,
-  CheckCircle,
-  RotateCcw,
-} from 'lucide-react';
+import { Star, MoveHorizontal as MoreHorizontal, X, Plus, Calendar, FileDown, Lock, Loader as Loader2, Check, Clock, Copy, Archive, Play, CircleCheck as CheckCircle, RotateCcw } from 'lucide-react';
 import { exportExperimentPdf } from '@/lib/pdfExport';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -95,7 +79,10 @@ export default function ExperimentHeader({
     setEditingTitle(false);
     const trimmed = titleValue.trim();
     if (trimmed && trimmed !== experiment.title) {
-      updateExperiment(experiment.id, { title: trimmed });
+      updateExperiment(experiment.id, { title: trimmed }).catch((err) => {
+        setTitleValue(experiment.title);
+        toast.error(err instanceof Error ? err.message : 'Could not update title');
+      });
     } else {
       setTitleValue(experiment.title);
     }
@@ -107,7 +94,9 @@ export default function ExperimentHeader({
   };
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateExperiment(experiment.id, { experiment_date: e.target.value });
+    updateExperiment(experiment.id, { experiment_date: e.target.value }).catch((err) => {
+      toast.error(err instanceof Error ? err.message : 'Could not update date');
+    });
   };
 
   const handleAddTag = () => {

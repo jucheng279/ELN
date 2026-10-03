@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Trash2,
   Lock,
@@ -107,6 +107,22 @@ export default function SettingsPage() {
   const currentMember = members.find((m) => m.user_id === user?.id);
   const isAdmin = currentMember?.role === 'owner' || currentMember?.role === 'admin';
 
+  const fetchInvitations = useCallback(async () => {
+    if (!currentWorkspace) return;
+    const { data, error } = await supabase
+      .from('workspace_invitations')
+      .select('*')
+      .eq('workspace_id', currentWorkspace.id)
+      .is('accepted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('Failed to load invitations:', error);
+      setInvitations([]);
+      return;
+    }
+    setInvitations((data ?? []) as WorkspaceInvitation[]);
+  }, [currentWorkspace]);
+
   // Initialize from stores
   useEffect(() => {
     if (currentWorkspace) {
@@ -115,7 +131,7 @@ export default function SettingsPage() {
       fetchMembers();
       fetchInvitations();
     }
-  }, [currentWorkspace, fetchMembers]);
+  }, [currentWorkspace, fetchMembers, fetchInvitations]);
 
   useEffect(() => {
     if (profile) {
@@ -123,17 +139,6 @@ export default function SettingsPage() {
       setTimezone(profile.timezone || 'UTC');
     }
   }, [profile]);
-
-  const fetchInvitations = async () => {
-    if (!currentWorkspace) return;
-    const { data } = await supabase
-      .from('workspace_invitations')
-      .select('*')
-      .eq('workspace_id', currentWorkspace.id)
-      .is('accepted_at', null)
-      .order('created_at', { ascending: false });
-    setInvitations((data ?? []) as WorkspaceInvitation[]);
-  };
 
   // Handlers
   const handleSaveWorkspace = async () => {
@@ -164,7 +169,8 @@ export default function SettingsPage() {
       setInviteRole('member');
       await fetchInvitations();
     } catch (err: unknown) {
-      setInviteError(err instanceof Error ? err.message : 'Failed to send invitation');
+      const message = err instanceof Object && 'message' in err ? String((err as { message: unknown }).message) : '';
+      setInviteError(message || 'Failed to send invitation');
     } finally {
       setInviting(false);
     }

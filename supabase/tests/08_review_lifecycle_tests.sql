@@ -1,6 +1,6 @@
 -- 08_review_lifecycle_tests.sql: full review lifecycle through canonical domain RPCs
 BEGIN;
-SELECT plan(24);
+SELECT plan(25);
 
 -- ──────────────────────────────────────────────────────
 -- Setup: author + reviewer in the same workspace
@@ -200,6 +200,17 @@ BEGIN
 END $$;
 SELECT pass('Author edits block and resubmits for review');
 
+-- now() is frozen within this transaction, so A and B share created_at and the
+-- (created_at, id) tie-break could rank A as newer. Order them the way real time would.
+DO $$
+BEGIN
+  PERFORM set_config('role', 'postgres', true);
+  UPDATE public.reviews
+    SET created_at = (SELECT created_at FROM public.reviews WHERE id = current_setting('test.review_a_id')::uuid)
+                     + interval '1 millisecond'
+    WHERE id = current_setting('test.review_b_id')::uuid;
+END $$;
+
 -- Append-only invariants: A unchanged, B is new pending row
 SELECT is(
   (SELECT status FROM public.reviews WHERE id = current_setting('test.review_a_id')::uuid),
@@ -305,6 +316,40 @@ SELECT is(
   (SELECT status FROM public.reviews WHERE id = current_setting('test.review_a_id')::uuid),
   'changes_requested',
   'Review A remains changes_requested after approval of B'
+);
+
+-- A review newer than the approval makes it stale; the subtransaction discards the probe review.
+DO $$
+DECLARE v_msg text := 'sign succeeded';
+BEGIN
+  BEGIN
+    PERFORM set_config('role', 'postgres', true);
+    INSERT INTO public.reviews (experiment_id, reviewer_id, revision_number, experiment_revision_id, created_at)
+    VALUES (
+      current_setting('test.experiment_id')::uuid,
+      current_setting('test.reviewer_id')::uuid,
+      current_setting('test.rev_n1')::int,
+      current_setting('test.rev_n1_id')::uuid,
+      (SELECT created_at FROM public.reviews WHERE id = current_setting('test.review_b_id')::uuid)
+        + interval '1 millisecond'
+    );
+
+    PERFORM set_config('request.jwt.claims', jsonb_build_object(
+      'sub', current_setting('test.reviewer_id'), 'role', 'authenticated')::text, true);
+    PERFORM set_config('role', 'authenticated', true);
+    PERFORM public.sign_and_lock_experiment(current_setting('test.experiment_id')::uuid);
+    RAISE EXCEPTION 'probe rollback';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM <> 'probe rollback' THEN v_msg := SQLSTATE || ': ' || SQLERRM; END IF;
+  END;
+  PERFORM set_config('role', 'postgres', true);
+  PERFORM set_config('test.stale_msg', v_msg, true);
+END $$;
+
+SELECT is(
+  current_setting('test.stale_msg'),
+  'PT409: Approval is stale: a newer review exists',
+  'Signing is refused when a newer review exists after approval'
 );
 
 -- ──────────────────────────────────────────────────────
